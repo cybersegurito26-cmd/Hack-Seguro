@@ -1,51 +1,65 @@
-# Hack-Seguro - PRD (Phase 1)
+# Hack-Seguro - PRD
 
 ## Overview
-**Hack-Seguro** is a mobile-first (Expo) educational and gamified application to teach cybersecurity and prevent cybercrimes to children, teenagers, parents and older adults in Mexico. Duolingo-style progression, focused on local Mexican scam scenarios.
+Hack-Seguro is a mobile-first Expo app (works in Expo Go and via web preview) with a real FastAPI + MongoDB backend. It teaches cybersecurity and cybercrime prevention to Mexican children, teens, parents and older adults through a Duolingo-style progression, four mini-games and a Claude-powered CiberBot. Users compete in weekly leagues by school code, and completed modules produce shareable PDF certificates.
 
-## Phase 1 Scope (this delivery) — Frontend UI-first with mock data
-Fully navigable app with local state. Backend, real AI chatbot, real auth, cloud persistence, downloadable certificates and voice narration are deferred to Phase 2.
+## Phase status
+- **Phase 1 (frontend UI + mock)**: DONE
+- **Phase 2 (real backend + IA + leagues + certs + Google Auth + local persistence)**: DONE
 
-## Feature list (Phase 1)
-- **Welcome + profile selection** — 4 profiles (Niño/Estudiante default, Adolescente, Padre/Madre, Adulto Mayor).
-- **Bottom tab navigation** — Inicio, Aprende, Juegos, CiberBot, Perfil.
-- **Dashboard** — greeting, streak chip, XP/Coins/Hearts pills, level card with progress, daily reward chest, recommended lesson card, "Jugar ahora", daily challenges list, badges preview.
-- **Learning path (Aprende)** — 10 modules with lessons (Contraseñas, Phishing, WhatsApp, Redes, Videojuegos, Fraudes bancarios, Compras, Privacidad, IA, Ciberacoso). Locked/unlocked states progressing gate by gate.
-- **Interactive lesson** — supports multiple-choice, true/false and "spot the fraud" with immediate feedback and celebratory finish screen (stars, XP, coins).
-- **Games (4)** — ¿Fraude o Real? swipe, Memorama Ciber, Reto de Contraseña (strength meter), Escape del Hacker (narrative decisions).
-- **CiberBot** — pre-scripted keyword-based Spanish assistant, quick action chips, never asks for personal data. **SIMULATED** (no LLM).
-- **Profile** — avatar, level, XP, coins, streak, badges grid, accessibility toggles (Large text, High contrast), Family/School placeholders, reset profile.
-- **Gamification** — XP, level (1-50 scale, 100 XP/level), CiberMonedas, hearts, streak (mocked to 3), 6 badges, daily chest claim.
-- **Local Mexican scam context** — Estafeta paquetería, becas Bienestar, BBVA, Marketplace, WhatsApp familia, etc.
+## Architecture
+- **Backend**: FastAPI + Motor (MongoDB) at 0.0.0.0:8001, all routes prefixed with `/api`.
+- **Auth**: Emergent-managed Google OAuth (`https://auth.emergentagent.com`). Session tokens (7-day) stored in Expo `SecureStore` on mobile / `localStorage` on web.
+- **AI**: Claude Sonnet 4.6 via `emergentintegrations.llm.chat.LlmChat` (multi-turn). Emergent Universal LLM Key in `/app/backend/.env`.
+- **PDF Certificates**: server-side with ReportLab (`reportlab==5.0.0`), served inline as `application/pdf`.
+- **Persistence**: MongoDB collections `users`, `user_sessions`, `schools`, `weekly_scores`, `lesson_events`, `game_events`, `chat_messages`, `certificates`. Token in `secureGet/secureSet` under key `hackseguro.session_token`.
 
-## Design tokens
-- Primary brand: Navy `#00357a`
-- Accent: Lime green `#d0e80b`
-- Surfaces cream/white `#F8FAFC`/`#FFFFFF`, dark ink text.
-- Icons: `@expo/vector-icons` (Ionicons).
-- Fonts: system default (rounded weight 800 for headings).
+## Backend endpoints (all under `/api`)
+- Auth: `POST /auth/session` (Emergent session_id → session_token), `GET /auth/me`, `POST /auth/logout`.
+- Schools: `GET /schools/mine`, `GET /schools/{code}`, `POST /schools/join`.
+- Progress: `GET /progress`, `POST /lessons/complete`, `POST /games/complete`, `POST /daily/claim`.
+- Leaderboards: `GET /leaderboards/weekly?scope=school|global` (rank starts at 1, Monday-anchored `week_start`, `me` object).
+- Certificates: `GET /certificates/{module_id}` (bearer via header or `?t=token` for browser links).
+- Chatbot: `POST /chatbot` (Claude Sonnet 4.6, multi-turn), `GET /chatbot/history`.
+- Teacher panel: `GET /teacher/roster` (grouped by grade+group; students only see 403).
 
-## File map
-- `/app/frontend/src/theme.ts` — color/spacing/radius tokens
-- `/app/frontend/src/mock.ts` — modules, lessons, games, badges, chatbot intents
-- `/app/frontend/src/store.tsx` — React Context state (in-memory)
-- `/app/frontend/app/_layout.tsx` — providers + icon prewarm preserved
-- `/app/frontend/app/index.tsx` — welcome + profile
-- `/app/frontend/app/(tabs)/*` — tabs
-- `/app/frontend/app/lesson/[id].tsx` — lesson runner
-- `/app/frontend/app/game/*` — 4 games
+## Frontend map
+- `/app/frontend/src/api.ts` — API client (Bearer, base URL).
+- `/app/frontend/src/auth.tsx` — AuthContext (Google login + web/mobile deep link parsing + refresh + logout).
+- `/app/frontend/src/store.tsx` — Thin action wrapper (calls backend, updates user from returned payload).
+- `/app/frontend/app/index.tsx` — Welcome with "Entrar con Google".
+- `/app/frontend/app/join-school.tsx` — School code + role + grade + group selection.
+- `/app/frontend/app/(tabs)/{index,learn,games,league,chatbot,profile,teacher}.tsx` — Tabs. `teacher` shows only for role teacher/parent.
+- `/app/frontend/app/lesson/[id].tsx` — Interactive lesson; posts `/lessons/complete`.
+- `/app/frontend/app/game/{fraude-real,memorama,password,escape}.tsx` — 4 games; post `/games/complete`.
 
-## What is SIMULATED / MOCKED
-- **CiberBot: MOCKED** — Local keyword-based script, no LLM.
-- **Progress/state: LOCAL ONLY** — resets on app cold start (no persistence yet).
-- **Daily reset: MOCKED** — streak fixed to 3, daily chest is per-session.
-- **Family/School panels: PLACEHOLDER** — labelled "Próximamente".
-- **Certificates: PLACEHOLDER** — no real file generation.
+## Weekly League (by school)
+- School code identifies each community (e.g. `DEMO-001`, `COL-LEON-001`, `SEC-CDMX-042`).
+- Users join via `/schools/join`, providing role (student/teacher/parent) + optional grade + group.
+- Weekly XP is aggregated on every lesson/game/daily-claim (`_apply_xp_coins`) into the `weekly_scores` collection keyed by `(user_id, week_start=Monday UTC)`.
+- `GET /leaderboards/weekly?scope=school` returns Top 10 sorted by XP with automatic gold/silver/bronze medals in the UI. Also returns a `me` block with my rank & XP for the current week.
+- Architecture is ready for future municipal/state scopes: the same collection already stores `school_code`, and the endpoint uses `scope=global` (no filter). Adding `scope=city/state` only needs a lookup from `schools.city`/`schools.state`.
 
-## Phase 2 (recommended next actions)
-1. Backend FastAPI + MongoDB (users, progress, lessons, games, badges, certificates).
-2. Persist progress locally with `@/src/utils/storage` and remotely via API.
-3. Integrate real LLM for CiberBot via `integration_playbook_expert_v2` (Emergent LLM Key candidate).
-4. Real streak based on server-side timestamps.
-5. Certificate generation + shareable PDF.
-6. Auth flow (JWT or Emergent Google Auth) for parents/teachers.
+## Gamification
+- XP: 10 per correct lesson answer + game XP (20–40) + 20 daily.
+- Coins: variable + 15 daily.
+- Level: `max(1, xp // 100 + 1)`.
+- Streak: server-tracked from `last_activity_at`.
+- Badges: `guardian` (contraseñas), `phishcazador` (phishing), `escudo` (3+ módulos), `maestro` (todos), `racha7` (racha ≥ 7 días), `detective` (juego fraude ≥ 4 aciertos).
+- Daily challenges: shown on Dashboard, mapped to real completions.
+- **Business enhancement** implemented: **Liga semanal por escuela** — impulsa retención diaria e invita a otras escuelas a unirse mediante compartir el código único.
+
+## What is MOCKED / SIMULATED
+- Nothing critical is mocked in Phase 2. Real backend, real AI (Claude Sonnet 4.6), real PDF, real Google Auth, real MongoDB.
+- Some game rewards are fixed (e.g. `password` game always awards +20 XP if strength ≥ 80%); this is a product design decision, not a mock.
+
+## What is DEFERRED
+- Local offline persistence beyond session token (progress already lives in MongoDB and reloads via `/auth/me`; adding an offline cache is optional).
+- Push notifications for streak reminders.
+- Municipal/state leaderboards (architecture ready).
+- Certificate signature verification page (a public `/api/certificates/verify/{cert_id}` could be added).
+
+## Testing
+- 17/17 backend pytest cases pass. Suite lives at `/app/backend/tests/test_backend.py`.
+- Manual login on web preview works with Google (real credential required).
+- Test bearer tokens are documented in `/app/memory/test_credentials.md` for CI/automation.
