@@ -1,0 +1,197 @@
+{
+  "app_name": "Hack-Seguro",
+  "personality": "4 Tactile / Playful LIGHT (Duolingo-style gamified learning path for Mexican youth & students)",
+  "personality_one_liner": "An interactive, joyful cybersecurity learning adventure designed for Mexican students to conquer online scams and cyber threats through playful daily paths and instant rewards.",
+  "color": {
+    "surface": "#FFFDF9",
+    "onSurface": "#1A1816",
+    "surfaceSecondary": "#F4EFE6",
+    "onSurfaceSecondary": "#2C2824",
+    "surfaceTertiary": "#EAE3D5",
+    "onSurfaceTertiary": "#3D3832",
+    "surfaceInverse": "#1E1A16",
+    "onSurfaceInverse": "#FFFDF9",
+    "brand": "#FF6B35",
+    "brandPrimary": "#FF5722",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#FF9F1C",
+    "onBrandSecondary": "#1A1816",
+    "brandTertiary": "#FFE5DC",
+    "onBrandTertiary": "#D3380C",
+    "success": "#2EC4B6",
+    "onSuccess": "#FFFFFF",
+    "warning": "#FF9F1C",
+    "onWarning": "#1A1816",
+    "error": "#E71D36",
+    "onError": "#FFFFFF",
+    "info": "#3A86FF",
+    "onInfo": "#FFFFFF",
+    "border": "#E2DACB",
+    "borderStrong": "#C8BCAB",
+    "divider": "#EFE8DA"
+  },
+  "typography": {
+    "displayFontFamily": "Fredoka",
+    "textFontFamily": "Plus Jakarta Sans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Maintain generous, friendly tactile padding with chunky rounded containers and clear touch targets (≥44pt).",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 8,
+    "md": 16,
+    "lg": 24,
+    "pill": 999
+  },
+  "shadow_tier": 2,
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": false,
+    "do's": [
+      "Use chunky rounded cards with soft spring press feedback",
+      "Keep touch targets large and friendly",
+      "Use high contrast text on pastel/saturated surfaces"
+    ],
+    "dont's": [
+      "Never use grey-on-pastel text combinations",
+      "Avoid sharp brutalist edges or dark corporate SaaS layouts"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Welcome",
+      "purpose": "Engaging onboarding introduction to Hack-Seguro with Mexican youth context and swift sign-in.",
+      "states": {
+        "loading": "Centered friendly bouncing loader with brand colors",
+        "empty": "No welcome data required",
+        "error": "Friendly alert with retry button"
+      },
+      "layout": "Full-bleed playful hero background, vibrant mascot introduction, clear value proposition about defeating cyber threats in Mexico, and chunky pill primary CTA."
+    },
+    {
+      "name": "Dashboard",
+      "purpose": "Main hub displaying streak, XP, CiberMonedas, daily status, and the Duolingo-style learning path.",
+      "states": {
+        "loading": "Skeleton path nodes with pulsing pulse animation",
+        "empty": "Prompt to start your first cybersecurity module",
+        "error": "Readable banner with reload button"
+      },
+      "layout": "Sticky top status bar (streak count, hearts, XP, CiberMonedas), scrolling linear interactive path with node checkpoints ('Fraude WhatsApp', 'Becas Falsas', 'Paquetería Falsa'), and sticky bottom tab navigation."
+    },
+    {
+      "name": "LearningPath",
+      "purpose": "Interactive Duolingo-style linear curriculum organized into units and lessons.",
+      "states": {
+        "loading": "Loading curriculum nodes...",
+        "empty": "No active modules found. Tap to refresh.",
+        "error": "Failed to load lessons. Retry button."
+      },
+      "layout": "Vertical winding path with playful node icons, unit header banners ('Módulo 1: Alerta de Fraudes'), locked/unlocked state badges, and quick start action."
+    },
+    {
+      "name": "InteractiveLesson",
+      "purpose": "Engaging lesson screen supporting quizzes, true/false, and spot-the-fake-message challenges.",
+      "states": {
+        "loading": "Loading challenge question...",
+        "empty": "No questions available in this lesson.",
+        "error": "Could not fetch question. Retry."
+      },
+      "layout": "Top progress bar with close button and heart count, center interactive card displaying a simulated Mexican scam text message (e.g. fake delivery SMS from Estafeta/DHL), multiple-choice option buttons, and sticky bottom check/continue button."
+    },
+    {
+      "name": "CiberBot",
+      "purpose": "Educational chatbot answering common Mexican cybersecurity questions (WhatsApp scams, scholarships, parcels).",
+      "states": {
+        "loading": "CiberBot is typing...",
+        "empty": "Ask CiberBot anything about online safety in Mexico!",
+        "error": "Failed to send message. Retry."
+      },
+      "layout": "Chat message history with rounded message bubbles, quick preset question chips ('¿Es real este mensaje de WhatsApp?', '¿Cómo identifico una beca falsa?'), and sticky input bar with send button."
+    },
+    {
+      "name": "MiniGames",
+      "purpose": "Interactive arcade mini-games ('Fraude o Real', 'Memorama Ciber', 'Reto de Contraseña') to test skills.",
+      "states": {
+        "loading": "Loading mini-games...",
+        "empty": "More games coming soon!",
+        "error": "Failed to load games. Retry."
+      },
+      "layout": "Grid of game cards with vibrant illustrations, difficulty badges, reward counters (XP + CiberMonedas), and launch CTA."
+    },
+    {
+      "name": "GamificationHub",
+      "purpose": "Rewards center displaying achievements, badge collection, chest openings, and daily streak rewards.",
+      "states": {
+        "loading": "Opening achievements vault...",
+        "empty": "Complete your first lesson to earn badges!",
+        "error": "Failed to load rewards. Retry."
+      },
+      "layout": "Top summary of CiberMonedas and streak count, grid of unlocked/locked shields and cyber badges, daily reward chest claim card, and leaderboard snippet."
+    },
+    {
+      "name": "FamilySchool",
+      "purpose": "Dedicated portal for parents and teachers to track student certificates and progress.",
+      "states": {
+        "loading": "Loading reports...",
+        "empty": "No student reports linked yet.",
+        "error": "Failed to load report data. Retry."
+      },
+      "layout": "Summary report card, downloadable safety certificate preview, tips for parents in Mexico, and export progress button."
+    },
+    {
+      "name": "ProfileSettings",
+      "purpose": "User profile, streak status, accessibility settings (large text, high contrast, sound), and account customization.",
+      "states": {
+        "loading": "Loading profile...",
+        "empty": "Profile data not found.",
+        "error": "Failed to load profile. Retry."
+      },
+      "layout": "User avatar header with XP badge, settings list grouped with tinted icon containers, accessibility toggles for high contrast and large text, and sign out."
+    }
+  ],
+  "images": {
+    "hero_mascot": {
+      "url": "https://images.unsplash.com/photo-1585842630354-c6766ebf210d",
+      "alt": "Cybersecurity shield badge and mascot"
+    },
+    "empty_state_art": {
+      "url": "https://images.unsplash.com/photo-1728756666032-d0b5552b6384",
+      "alt": "Playful security badge illustration"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Implement the Duolingo-style linear learning path on the Dashboard and LearningPath screens with clear node checkpoints.",
+    "Ensure all buttons use chunky rounded pill styling with spring press feedback and touch targets >= 44x44pt.",
+    "Mexican cybersecurity context is core: simulate common local scams (WhatsApp delivery notices, fake Bienestar scholarships, false bank alerts).",
+    "Strictly follow the Tactile / Playful LIGHT personality: warm cream surface, vibrant orange brand primary, deep ink text, no purple/indigo/navy tones.",
+    "Every screen must feature Loading, Empty, and Error full-screen states.",
+    "Icons must use Phosphor icon set consistently across all tabs and actions."
+  ]
+}
