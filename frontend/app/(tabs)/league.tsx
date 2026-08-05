@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 
 import { colors, spacing, radius, fontSize, shadow } from "@/src/theme";
 import { api } from "@/src/api";
@@ -41,15 +42,21 @@ function weekLabel(iso: string): string {
 
 export default function LeagueScreen() {
   const { user } = useAuth();
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [scope, setScope] = useState<"school" | "global">("school");
+  const [scope, setScope] = useState<"school" | "city" | "state" | "global">("school");
   const [data, setData] = useState<any>(null);
+  const [season, setSeason] = useState<any>(null);
 
   const load = useCallback(async () => {
     try {
-      const res = await api.weeklyLeaderboard(scope);
+      const [res, seasonRes] = await Promise.all([
+        api.weeklyLeaderboard(scope),
+        api.seasonsLeaderboard().catch(() => null),
+      ]);
       setData(res);
+      setSeason(seasonRes);
     } catch (e) {
       setData(null);
     } finally {
@@ -75,26 +82,24 @@ export default function LeagueScreen() {
       </View>
 
       <View style={styles.scopeRow} testID="league-scope-row">
-        <TouchableOpacity
-          style={[styles.scopeBtn, scope === "school" && styles.scopeBtnActive]}
-          onPress={() => setScope("school")}
-          testID="scope-school"
-        >
-          <Ionicons name="school" size={16} color={scope === "school" ? colors.onBrand : colors.brand} />
-          <Text style={[styles.scopeText, scope === "school" && { color: colors.onBrand }]}>
-            Mi escuela
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.scopeBtn, scope === "global" && styles.scopeBtnActive]}
-          onPress={() => setScope("global")}
-          testID="scope-global"
-        >
-          <Ionicons name="globe" size={16} color={scope === "global" ? colors.onBrand : colors.brand} />
-          <Text style={[styles.scopeText, scope === "global" && { color: colors.onBrand }]}>
-            Nacional
-          </Text>
-        </TouchableOpacity>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+          {(["school", "city", "state", "global"] as const).map((k) => {
+            const label = k === "school" ? "Mi escuela" : k === "city" ? "Ciudad" : k === "state" ? "Estado" : "Nacional";
+            const icon = k === "school" ? "school" : k === "city" ? "business" : k === "state" ? "map" : "globe";
+            const active = scope === k;
+            return (
+              <TouchableOpacity
+                key={k}
+                style={[styles.scopeBtn, active && styles.scopeBtnActive]}
+                onPress={() => setScope(k)}
+                testID={`scope-${k}`}
+              >
+                <Ionicons name={icon as any} size={16} color={active ? colors.onBrand : colors.brand} />
+                <Text style={[styles.scopeText, active && { color: colors.onBrand }]}>{label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
       </View>
 
       {loading ? (
@@ -167,6 +172,54 @@ export default function LeagueScreen() {
               La liga se reinicia cada lunes. Compite con estudiantes de tu escuela y desbloquea insignias por escalar posiciones.
             </Text>
           </View>
+
+          {season && season.top_schools?.length > 0 && (
+            <>
+              <Text style={styles.sectionTitle}>Temporada {season.season} · Escuelas</Text>
+              <Text style={styles.seasonHint}>
+                Ranking trimestral por XP promedio por estudiante activo.
+              </Text>
+              {season.top_schools.slice(0, 5).map((s: any) => {
+                const isMine = s.school_code === user?.school_code;
+                const m = medal(s.rank);
+                return (
+                  <View key={s.school_code} style={[styles.row, isMine && styles.rowMe]} testID={`season-row-${s.rank}`}>
+                    <View style={styles.rankBox}>
+                      {m ? <Ionicons name={m.icon as any} size={22} color={m.color} /> : <Text style={styles.rankText}>{s.rank}</Text>}
+                    </View>
+                    <View style={styles.avatar}>
+                      <Ionicons name="school" size={22} color={colors.brand} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.rowName} numberOfLines={1}>{s.school_name}</Text>
+                      <Text style={styles.rowMeta}>
+                        {s.active_students} activos · {s.city || ""}
+                      </Text>
+                    </View>
+                    <View style={styles.xpChip}>
+                      <Text style={styles.xpChipText}>{s.avg_xp_per_active_student} XP</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </>
+          )}
+
+          <TouchableOpacity
+            style={styles.shareCta}
+            onPress={() => router.push("/school-share" as any)}
+            testID="share-school-cta"
+            activeOpacity={0.9}
+          >
+            <View style={styles.shareIcon}>
+              <Ionicons name="share-social" size={22} color={colors.brand} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.shareTitle}>Invita a tu escuela</Text>
+              <Text style={styles.shareSub}>Comparte tu código y aparecerán en la liga</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={22} color={colors.brand} />
+          </TouchableOpacity>
 
           <View style={{ height: 24 }} />
         </ScrollView>
@@ -251,4 +304,18 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
   },
   infoText: { flex: 1, color: colors.brand, fontSize: fontSize.sm, lineHeight: 20 },
+  seasonHint: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: -6, marginBottom: spacing.sm },
+  shareCta: {
+    marginTop: spacing.md,
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
+    padding: spacing.md, borderRadius: radius.lg,
+    backgroundColor: colors.accent, ...shadow.card,
+  },
+  shareIcon: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: "rgba(0,53,122,0.15)",
+    alignItems: "center", justifyContent: "center",
+  },
+  shareTitle: { color: colors.brand, fontWeight: "800", fontSize: fontSize.base },
+  shareSub: { color: colors.brand, opacity: 0.75, fontSize: fontSize.xs, marginTop: 2 },
 });

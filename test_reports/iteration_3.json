@@ -1,0 +1,46 @@
+{
+  "summary": "Phase 3 backend testing: 32/35 pytest cases PASS against public URL https://ciber-educativo.preview.emergentagent.com. 3 FAIL due to a CRITICAL Kubernetes ingress routing bug — the new /verify/{cert_id} (HTML) and /join public endpoints are declared without the /api prefix on `app` (server.py:874 and :976), so ingress forwards those paths to the Expo web SPA (port 3000) instead of the FastAPI backend (port 8001). This means the QR code baked into every certificate PDF (which points to `{PUBLIC_BASE_URL}/verify/{cert_id}`, server.py:653) and every school-poster QR (which points to `{PUBLIC_BASE_URL}/join?code=CODE`, server.py:967) will land scanners on the mobile SPA and NOT on the branded verification/landing pages. Both endpoints work fine when hit directly on localhost:8001, confirming the FastAPI logic is correct — the fix must be to move them under /api/ (e.g. /api/verify/{cert_id}, /api/join) and update the two URL builders accordingly. Everything else passes: /api/schools/DEMO-001/poster.png returns a 97772-byte 1080x1920 image/png; /api/certificates/verify/HS-BAD-ID returns {valid:false}; /api/certificates/verify/HS-B37E6ED7 returns {valid:true, student_name:'Estudiante Prueba', module_title:'Contraseñas seguras', school:{code:'DEMO-001',city:'Demo',state:'MX', ...}}; leaderboards scope=city|state|school|global all work and scope=bogus returns 400; /api/seasons/current returns {season:'2026-Q3', start, end}; /api/seasons/leaderboard returns top_schools sorted desc by avg_xp_per_active_student with rank starting at 1 and every row containing school_code, school_name, total_xp, active_students, avg_xp_per_active_student, rank; /api/register-push returns 500 with placeholder EMERGENT_PUSH_KEY (acceptable), 403 on user_id mismatch, 401 without auth; /api/push/streak-reminder returns {scheduled:0,sent:0,date:'2026-08-05'} with placeholder key; certificate PDF regression still returns application/pdf %PDF magic. All 17 Phase-2 tests still pass unchanged.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /verify/{cert_id}", "issue": "Route is registered on `app` without /api prefix (server.py:874) so K8s ingress routes it to Expo frontend (port 3000) instead of backend (port 8001). Users scanning the QR code on any certificate PDF hit the SPA HTML instead of the branded verify page. Fix: move under /api/ (e.g. @api.get('/verify/{cert_id}') or @app.get('/api/verify/{cert_id}')) and update verify_url in _draw_certificate (server.py:653) to match.", "priority": "CRITICAL"},
+      {"endpoint": "GET /join", "issue": "Same ingress issue (server.py:976). Poster QR (server.py:967 `share_url = f\"{PUBLIC_BASE_URL}/join?code={code}\"`) is unreachable publicly. Fix: move under /api/ and update share_url in school_poster.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/certificates/verify/{cert_id}", "issue": "For an unknown cert_id the endpoint returns HTTP 200 with {valid:false} rather than a 404. Not a bug per spec (spec says {valid:false}), but confirm this is the desired public contract."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase3.py",
+    "/app/backend/tests/test_backend.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/all_results.xml",
+    "/app/test_reports/pytest/phase3_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Move /verify/{cert_id} and /join under the /api router (or duplicate them as /api/verify/{cert_id} and /api/join) so K8s ingress forwards them to the FastAPI backend. Then update `verify_url = f\"{PUBLIC_BASE_URL}/api/verify/{cert_id}\"` in _draw_certificate (server.py:653) and `share_url = f\"{PUBLIC_BASE_URL}/api/join?code={code}\"` in school_poster (server.py:967).",
+    "Consider persisting register-push failures when EMERGENT_PUSH_KEY is 'placeholder' as a soft 202 (accepted, not-yet-delivered) rather than 500, so client apps in preview don't surface auth errors to users. Optional — spec says 500/401 is acceptable.",
+    "Optional: split server.py (1196 lines) into routers/ (auth, schools, progress, leaderboards, certificates, seasons, push, chatbot) — was flagged in iteration_2 and the file grew again."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 1196 lines (was 761). Recommend splitting into routers/ before Phase 4.",
+    "_push_client is a module-level httpx.AsyncClient created at import time. If PUSH_BASE_URL is unreachable or EMERGENT_PUSH_KEY changes at runtime (deployment injection), the client won't pick it up. Consider building the client lazily inside the endpoint, or reload via startup hook that reads env after load_dotenv.",
+    "season_leaderboard aggregates lesson_events and game_events into `lesson_rows`/`game_rows` locally (server.py:1044-1045) but then discards those in favour of `weekly_scores` (server.py:1061). Dead code — the two aggregate calls above should be deleted to save a round-trip.",
+    "verify_certificate_json returns HTTP 200 with {valid:false} for unknown cert_id. Fine per spec but note it also breaks the standard 404 semantic for cache/CDN behaviour.",
+    "In-memory _seen_session_ids still not persisted (called out in iteration_2). Still low priority for MVP."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase3.py (new)"
+  ],
+  "success_rate": {"backend": "91% (32/35 pytest); Phase-3-new endpoints: 15/18 pass, 3 fail on ingress routing", "frontend": "N/A (skipped per request)"},
+  "seed_data_creation": "Reused existing tokens from iteration_2 (STUDENT=test-token-7a69def0cf734327 for user_9aabfbd69c36, TEACHER=test-token-749533d90eb84419). Certificate HS-B37E6ED7 already existed for passwords module; no new seed data created.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Base URL: https://ciber-educativo.preview.emergentagent.com. Run: `cd /app/backend && STUDENT_TOKEN=test-token-7a69def0cf734327 TEACHER_TOKEN=test-token-749533d90eb84419 EXPO_PUBLIC_BACKEND_URL=<base> python -m pytest tests/ -v --junitxml=/app/test_reports/pytest/all_results.xml`. Once main agent moves /verify and /join under /api, update selectors in test_phase3.py TestCertificateVerify.test_verify_bad_id_html / test_verify_valid_json_and_html / TestSchoolPoster.test_join_landing_html to hit /api/verify/... and /api/join. Certificate DB row for our test user: cert_id=HS-B37E6ED7, module=passwords.",
+  "rca_of_issue": "Kubernetes ingress rule sends only /api/* traffic to the FastAPI backend (port 8001); everything else is sent to the Expo web dev server (port 3000). Because two new endpoints (/verify/{cert_id} at server.py:874 and /join at server.py:976) are registered directly on the FastAPI `app` object without the /api prefix, they are physically unreachable from outside the pod. Both the certificate-PDF QR (server.py:653) and the school-poster QR (server.py:967) point to those unreachable URLs, so end-users scanning the QR will see the mobile web SPA HTML instead of the verify/landing page. Reproduction: curl -sI https://ciber-educativo.preview.emergentagent.com/verify/HS-BAD-ID returns Expo SPA HTML; curl on localhost:8001/verify/HS-BAD-ID returns the FastAPI HTML with 'Certificado no encontrado'. Mitigation: register both routes under the /api prefix (e.g., @api.get('/verify/{cert_id}') and @api.get('/join')) and rebuild the QR URLs accordingly."
+}

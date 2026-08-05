@@ -5,6 +5,7 @@ import * as Linking from "expo-linking";
 import { useRouter } from "expo-router";
 
 import { api, getToken, setToken } from "@/src/api";
+import { registerForPush } from "@/src/push";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -62,6 +63,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const res = await api.me();
       setUser(res.user);
+      if (res.user?.user_id) {
+        registerForPush(res.user.user_id).catch(() => {});
+      }
     } catch {
       setUser(null);
     }

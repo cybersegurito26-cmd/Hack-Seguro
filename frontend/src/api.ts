@@ -84,10 +84,17 @@ export const api = {
     apiFetch<any>("/games/complete", { method: "POST", body: { game_id, score, total } }),
   claimDaily: () => apiFetch<any>("/daily/claim", { method: "POST" }),
 
-  weeklyLeaderboard: (scope: "school" | "global" = "school") =>
+  weeklyLeaderboard: (scope: "school" | "global" | "city" | "state" = "school") =>
     apiFetch<{ scope: string; school_code: string | null; week_start: string; top: any[]; me: any }>(
       `/leaderboards/weekly?scope=${scope}`
     ),
+
+  seasonsCurrent: () => apiFetch<{ season: string; start: string; end: string }>("/seasons/current", { auth: false }),
+  seasonsLeaderboard: () =>
+    apiFetch<{ season: string; start: string; end: string; top_schools: any[] }>("/seasons/leaderboard"),
+
+  registerPush: (user_id: string, platform: string, device_token: string) =>
+    apiFetch("/register-push", { method: "POST", body: { user_id, platform, device_token } }),
 
   certificateUrl: async (module_id: string) => {
     const token = await getToken();
@@ -96,6 +103,13 @@ export const api = {
       token,
     };
   },
+
+  verifyCertificate: (cert_id: string) =>
+    apiFetch<any>(`/certificates/verify/${cert_id}`, { auth: false }),
+
+  schoolPosterUrl: (code: string) => `${BASE_URL}/api/schools/${encodeURIComponent(code)}/poster.png`,
+  schoolShareUrl: (code: string) => `${BASE_URL}/join?code=${encodeURIComponent(code)}`,
+  verifyPageUrl: (cert_id: string) => `${BASE_URL}/verify/${encodeURIComponent(cert_id)}`,
 
   chat: (session_id: string, message: string) =>
     apiFetch<{ reply: string }>("/chatbot", { method: "POST", body: { session_id, message } }),

@@ -1,24 +1,30 @@
 {
   "expo": {
-    "name": "frontend",
+    "name": "Hack-Seguro",
     "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "frontend",
+    "scheme": "hackseguro",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.cibereducativo.ud6q13"
+      "bundleIdentifier": "com.emergent.cibereducativo.ud6q13",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Escanear códigos QR de escuela",
+        "NSPhotoLibraryUsageDescription": "Guardar tu certificado en fotos"
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000000"
+        "backgroundColor": "#00357a"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.emergent.cibereducativo.ud6q13"
+      "package": "com.emergent.cibereducativo.ud6q13",
+      "googleServicesFile": "./google-services.json",
+      "permissions": ["POST_NOTIFICATIONS", "VIBRATE"]
     },
     "web": {
       "bundler": "metro",
@@ -27,13 +33,14 @@
     },
     "plugins": [
       "expo-router",
+      "expo-notifications",
       [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-image.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#000000"
+          "backgroundColor": "#00357a"
         }
       ]
     ],

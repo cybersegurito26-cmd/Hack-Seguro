@@ -33,9 +33,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
 import httpx
+import qrcode
+from PIL import Image, ImageDraw, ImageFont
 from dotenv import load_dotenv
 from fastapi import FastAPI, APIRouter, Header, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse, Response
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
@@ -44,6 +46,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfgen import canvas
 from reportlab.lib.colors import HexColor
 from reportlab.lib.units import cm
+from reportlab.lib.utils import ImageReader
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
@@ -56,6 +59,9 @@ load_dotenv(ROOT_DIR / ".env")
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ.get("DB_NAME", "hackseguro")
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+EMERGENT_PUSH_KEY = os.environ.get("EMERGENT_PUSH_KEY", "placeholder")
+PUSH_BASE_URL = "https://integrations.emergentagent.com"
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL") or "https://ciber-educativo.preview.emergentagent.com"
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -495,24 +501,46 @@ async def daily_claim(authorization: Optional[str] = Header(None)):
 
 
 # -------------------------------------------------------------------
-# Leaderboards
+# Leaderboards (school | global | city | state)
 # -------------------------------------------------------------------
+async def _schools_in_scope(scope: str, ref_school_code: Optional[str]) -> Optional[List[str]]:
+    """Return list of school_codes matching the scope; None means no filter (global)."""
+    if scope == "global":
+        return None
+    if not ref_school_code:
+        return []
+    my_school = await db.schools.find_one({"code": ref_school_code}, {"_id": 0})
+    if not my_school:
+        return []
+    if scope == "school":
+        return [ref_school_code]
+    if scope == "city":
+        cur = db.schools.find({"city": my_school.get("city")}, {"_id": 0, "code": 1})
+        rows = await cur.to_list(length=1000)
+        return [r["code"] for r in rows]
+    if scope == "state":
+        cur = db.schools.find({"state": my_school.get("state")}, {"_id": 0, "code": 1})
+        rows = await cur.to_list(length=1000)
+        return [r["code"] for r in rows]
+    return []
+
+
 @api.get("/leaderboards/weekly")
 async def weekly_leaderboard(
     scope: str = "school",
     authorization: Optional[str] = Header(None),
 ):
     u = await current_user(authorization)
+    if scope not in {"school", "global", "city", "state"}:
+        raise HTTPException(400, "scope inválido")
+
     week_start = _iso_week_start()
     match: dict = {"week_start": week_start}
-    if scope == "school":
-        if not u.school_code:
-            return {"scope": scope, "school_code": None, "week_start": week_start.isoformat(), "top": [], "me": None}
-        match["school_code"] = u.school_code
-    elif scope == "global":
-        pass  # No school filter — designed for future municipal/state scoping
-    else:
-        raise HTTPException(400, "scope inválido")
+    codes = await _schools_in_scope(scope, u.school_code)
+    if codes is not None:
+        if not codes:
+            return {"scope": scope, "school_code": u.school_code, "week_start": week_start.isoformat(), "top": [], "me": None}
+        match["school_code"] = {"$in": codes}
 
     cur = db.weekly_scores.find(match, {"_id": 0}).sort("xp", -1).limit(10)
     top_rows = await cur.to_list(length=10)
@@ -525,13 +553,13 @@ async def weekly_leaderboard(
             "picture": r.get("picture"),
             "grade": r.get("grade"),
             "group": r.get("group"),
+            "school_code": r.get("school_code"),
             "xp": r.get("xp", 0),
         })
 
     me_row = await db.weekly_scores.find_one({"user_id": u.user_id, "week_start": week_start}, {"_id": 0})
     me = None
     if me_row:
-        # Compute my rank within the scope
         higher_match = {**match, "xp": {"$gt": me_row["xp"]}}
         higher = await db.weekly_scores.count_documents(higher_match)
         me = {"rank": higher + 1, "xp": me_row["xp"], "name": u.name}
@@ -562,6 +590,17 @@ MODULE_TITLES = {
 }
 
 
+def _qr_png_bytes(url: str, size: int = 240) -> bytes:
+    qr = qrcode.QRCode(border=1, box_size=8)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="#00357a", back_color="white").convert("RGB")
+    img = img.resize((size, size))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def _draw_certificate(name: str, module_title: str, cert_id: str, when: datetime) -> bytes:
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=landscape(A4))
@@ -572,15 +611,12 @@ def _draw_certificate(name: str, module_title: str, cert_id: str, when: datetime
     ink = HexColor("#0F172A")
     muted = HexColor("#475569")
 
-    # Background band
     c.setFillColor(navy)
     c.rect(0, 0, W, H, fill=1, stroke=0)
 
-    # White card
     c.setFillColor(HexColor("#FFFFFF"))
     c.roundRect(1.5 * cm, 1.5 * cm, W - 3 * cm, H - 3 * cm, 20, fill=1, stroke=0)
 
-    # Lime ribbon
     c.setFillColor(lime)
     c.roundRect(1.5 * cm, H - 4.5 * cm, W - 3 * cm, 1.6 * cm, 10, fill=1, stroke=0)
 
@@ -613,9 +649,21 @@ def _draw_certificate(name: str, module_title: str, cert_id: str, when: datetime
     c.drawCentredString(W / 2, H - 15.5 * cm,
                         f"Emitido el {when.strftime('%d/%m/%Y')} · ID: {cert_id}")
 
+    # QR code for verification
+    verify_url = f"{PUBLIC_BASE_URL}/verify/{cert_id}"
+    try:
+        qr_png = _qr_png_bytes(verify_url, 220)
+        qr_img = ImageReader(io.BytesIO(qr_png))
+        c.drawImage(qr_img, W - 5.5 * cm, 1.8 * cm, width=3.5 * cm, height=3.5 * cm, mask="auto")
+        c.setFillColor(muted)
+        c.setFont("Helvetica", 8)
+        c.drawRightString(W - 1.8 * cm, 1.6 * cm, "Escanea para verificar")
+    except Exception:
+        pass
+
     c.setFont("Helvetica-Oblique", 10)
-    c.drawCentredString(W / 2, H - 16.5 * cm,
-                        "App educativa Hack-Seguro · Prevención de ciberdelitos en México")
+    c.setFillColor(muted)
+    c.drawString(2 * cm, 1.8 * cm, "App educativa Hack-Seguro · Prevención de ciberdelitos en México")
 
     c.showPage()
     c.save()
@@ -739,6 +787,393 @@ async def teacher_roster(authorization: Optional[str] = Header(None)):
         for k, v in sorted(groups.items())
     ]
     return {"school_code": u.school_code, "groups": grouped_list}
+
+
+# -------------------------------------------------------------------
+# Certificate verification (public)
+# -------------------------------------------------------------------
+@api.get("/certificates/verify/{cert_id}")
+async def verify_certificate_json(cert_id: str):
+    cert = await db.certificates.find_one({"cert_id": cert_id}, {"_id": 0})
+    if not cert:
+        return {"valid": False, "cert_id": cert_id}
+    u = await db.users.find_one({"user_id": cert["user_id"]}, {"_id": 0, "name": 1, "school_code": 1, "grade": 1, "group": 1})
+    school = None
+    if u and u.get("school_code"):
+        school = await db.schools.find_one({"code": u["school_code"]}, {"_id": 0})
+    issued = cert.get("issued_at")
+    if isinstance(issued, datetime):
+        issued = issued.isoformat()
+    return {
+        "valid": True,
+        "cert_id": cert_id,
+        "student_name": u.get("name") if u else None,
+        "grade": u.get("grade") if u else None,
+        "group": u.get("group") if u else None,
+        "school": school,
+        "module_id": cert["module_id"],
+        "module_title": MODULE_TITLES.get(cert["module_id"], cert["module_id"]),
+        "issued_at": issued,
+    }
+
+
+VERIFY_HTML_TEMPLATE = """<!doctype html>
+<html lang="es"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Verificar certificado · Hack-Seguro</title>
+<style>
+  :root {{
+    --navy: #00357a; --lime: #d0e80b; --ink: #0f172a;
+    --muted: #475569; --surface: #f8fafc; --white: #ffffff;
+    --success: #16a34a; --danger: #ef4444;
+  }}
+  * {{ box-sizing: border-box }}
+  body {{
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--navy); color: var(--ink); min-height: 100vh;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }}
+  .card {{
+    background: var(--white); border-radius: 24px; max-width: 560px; width: 100%;
+    padding: 32px; box-shadow: 0 30px 80px rgba(0,0,0,0.35);
+  }}
+  .badge {{
+    display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px;
+    font-weight: 800; font-size: 14px; margin-bottom: 20px;
+  }}
+  .badge.valid {{ background: #dcfce7; color: var(--success) }}
+  .badge.invalid {{ background: #fee2e2; color: var(--danger) }}
+  h1 {{ margin: 0 0 8px 0; font-size: 26px; color: var(--navy) }}
+  h2 {{ margin: 24px 0 8px 0; font-size: 15px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 800 }}
+  .name {{ font-size: 28px; font-weight: 800; color: var(--ink); margin: 4px 0 0 0 }}
+  .row {{ margin: 6px 0; color: var(--muted); font-size: 15px }}
+  .row strong {{ color: var(--ink) }}
+  .footer {{
+    margin-top: 32px; padding-top: 20px; border-top: 1px solid #e2e8f0;
+    color: var(--muted); font-size: 13px;
+  }}
+  .brand {{ display: flex; align-items: center; gap: 12px; margin-bottom: 24px }}
+  .brand .logo {{
+    width: 44px; height: 44px; border-radius: 22px; background: var(--lime);
+    display: inline-flex; align-items: center; justify-content: center; color: var(--navy);
+    font-weight: 900;
+  }}
+  .brand span {{ color: var(--navy); font-weight: 800; letter-spacing: 0.5px }}
+</style></head><body>
+<div class="card">
+  <div class="brand"><div class="logo">HS</div><span>Hack-Seguro</span></div>
+  {content}
+  <div class="footer">
+    App educativa Hack-Seguro · Prevención de ciberdelitos en México · ID {cert_id}
+  </div>
+</div>
+</body></html>"""
+
+
+@app.get("/verify/{cert_id}")
+async def verify_certificate_html(cert_id: str):
+    data = await verify_certificate_json(cert_id)
+    if not data["valid"]:
+        content = (
+            '<span class="badge invalid">✗ Certificado no encontrado</span>'
+            "<h1>Este certificado no existe en Hack-Seguro</h1>"
+            "<p style=\"color:#475569;line-height:1.5\">Verifica el ID de nuevo o pídele a la persona un enlace fresco. "
+            "Los certificados válidos siempre se emiten desde <strong>hackseguro.app</strong>.</p>"
+        )
+    else:
+        school_line = ""
+        if data.get("school"):
+            s = data["school"]
+            school_line = f'<div class="row">Escuela: <strong>{s.get("name")}</strong> · {s.get("city", "")} {s.get("state", "")}</div>'
+        grade_line = ""
+        if data.get("grade") or data.get("group"):
+            grade_line = f'<div class="row">Grupo: <strong>{data.get("grade") or "?"}° {data.get("group") or ""}</strong></div>'
+        issued = (data.get("issued_at") or "")[:10]
+        content = f"""
+          <span class="badge valid">✓ Certificado válido</span>
+          <h1>{data.get("module_title")}</h1>
+          <h2>Otorgado a</h2>
+          <div class="name">{data.get("student_name")}</div>
+          {grade_line}
+          {school_line}
+          <div class="row">Emitido: <strong>{issued}</strong></div>
+        """
+    html = VERIFY_HTML_TEMPLATE.format(content=content, cert_id=cert_id)
+    return HTMLResponse(html)
+
+
+# -------------------------------------------------------------------
+# Shareable school poster (server-side PNG)
+# -------------------------------------------------------------------
+def _generate_school_poster(school: dict, share_url: str) -> bytes:
+    W, H = 1080, 1920
+    img = Image.new("RGB", (W, H), "#00357a")
+    d = ImageDraw.Draw(img)
+
+    def font(size: int, bold: bool = False) -> ImageFont.ImageFont:
+        candidates = [
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
+        for p in candidates:
+            try:
+                return ImageFont.truetype(p, size)
+            except Exception:
+                continue
+        return ImageFont.load_default()
+
+    # Lime accent band top
+    d.rectangle([(0, 0), (W, 12)], fill="#d0e80b")
+
+    # Logo circle
+    d.ellipse([(W // 2 - 130, 220), (W // 2 + 130, 480)], fill="#d0e80b")
+    d.text((W // 2, 340), "HS", fill="#00357a", font=font(120, True), anchor="mm")
+
+    # Titles
+    d.text((W // 2, 570), "HACK-SEGURO", fill="#FFFFFF", font=font(72, True), anchor="mm")
+    d.text((W // 2, 640), "Aprende ciberseguridad jugando", fill="#d0e80b", font=font(36), anchor="mm")
+
+    # School name
+    school_name = school.get("name", "")
+    d.text((W // 2, 830), "Únete a mi escuela", fill="#FFFFFF", font=font(42), anchor="mm")
+    d.text((W // 2, 900), school_name[:34], fill="#FFFFFF", font=font(52, True), anchor="mm")
+
+    # Code card
+    card_top, card_bottom = 1000, 1240
+    d.rounded_rectangle([(120, card_top), (W - 120, card_bottom)], radius=40, fill="#FFFFFF")
+    d.text((W // 2, card_top + 60), "Código de escuela", fill="#475569", font=font(30), anchor="mm")
+    d.text((W // 2, card_top + 150), school.get("code", ""), fill="#00357a", font=font(88, True), anchor="mm")
+
+    # QR
+    qr_size = 480
+    qr_png = _qr_png_bytes(share_url, qr_size)
+    qr_img = Image.open(io.BytesIO(qr_png)).convert("RGB")
+    img.paste(qr_img, ((W - qr_size) // 2, 1310))
+
+    # Footer
+    d.text((W // 2, 1840), "Escanea para descargar Hack-Seguro", fill="#d0e80b", font=font(32), anchor="mm")
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+@app.get("/api/schools/{code}/poster.png")
+async def school_poster(code: str):
+    school = await db.schools.find_one({"code": code.upper()}, {"_id": 0})
+    if not school:
+        raise HTTPException(404, "Escuela no encontrada")
+    share_url = f"{PUBLIC_BASE_URL}/join?code={code.upper()}"
+    png = _generate_school_poster(school, share_url)
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={"Content-Disposition": f'inline; filename="hackseguro-{code}.png"'},
+    )
+
+
+@app.get("/join")
+async def join_landing(code: Optional[str] = None):
+    """Public landing page that installs prompt scans open to."""
+    code = (code or "").upper()
+    school_line = ""
+    if code:
+        school = await db.schools.find_one({"code": code}, {"_id": 0})
+        if school:
+            school_line = f"<h2>Únete a {school['name']}</h2><p>Código: <strong>{code}</strong></p>"
+    html = f"""<!doctype html><html lang="es"><head><meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <title>Únete a Hack-Seguro</title>
+    <style>body{{background:#00357a;color:#fff;font-family:sans-serif;margin:0;min-height:100vh;
+    display:flex;align-items:center;justify-content:center;padding:24px;text-align:center}}
+    .card{{background:#fff;color:#0f172a;padding:32px;border-radius:24px;max-width:500px}}
+    h1{{color:#00357a}} .cta{{display:inline-block;margin-top:20px;padding:14px 28px;background:#d0e80b;color:#00357a;
+    border-radius:999px;font-weight:800;text-decoration:none}}
+    </style></head><body><div class="card">
+    <h1>🛡️ Hack-Seguro</h1>{school_line}
+    <p>Aprende ciberseguridad jugando cada día. Compite con tu escuela y gana insignias.</p>
+    <a class="cta" href="{PUBLIC_BASE_URL}">Abrir Hack-Seguro</a>
+    </div></body></html>"""
+    return HTMLResponse(html)
+
+
+# -------------------------------------------------------------------
+# Seasons (trimestrales, XP promedio por estudiante activo)
+# -------------------------------------------------------------------
+def _current_season_bounds(dt: Optional[datetime] = None):
+    d = (dt or utcnow()).astimezone(timezone.utc)
+    year = d.year
+    q = (d.month - 1) // 3 + 1
+    start_month = (q - 1) * 3 + 1
+    start = datetime(year, start_month, 1, tzinfo=timezone.utc)
+    if q == 4:
+        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        end = datetime(year, start_month + 3, 1, tzinfo=timezone.utc)
+    label = f"{year}-Q{q}"
+    return start, end, label
+
+
+@api.get("/seasons/current")
+async def season_current():
+    start, end, label = _current_season_bounds()
+    return {"season": label, "start": start.isoformat(), "end": end.isoformat()}
+
+
+@api.get("/seasons/leaderboard")
+async def season_leaderboard(authorization: Optional[str] = Header(None)):
+    _ = await current_user(authorization)
+    start, end, label = _current_season_bounds()
+
+    pipeline = [
+        {"$match": {"created_at": {"$gte": start, "$lt": end}}},
+        {"$group": {
+            "_id": {"user_id": "$user_id", "school_code": "$school_code"},
+            "xp_earned": {"$sum": "$xp"},
+        }},
+        {"$group": {
+            "_id": "$_id.school_code",
+            "total_xp": {"$sum": "$xp_earned"},
+            "active_students": {"$sum": 1},
+        }},
+        {"$match": {"_id": {"$ne": None}, "active_students": {"$gte": 1}}},
+    ]
+
+    # Merge lesson_events + game_events XP per user per school
+    lesson_rows = await db.lesson_events.aggregate(pipeline).to_list(length=1000)
+    game_rows = await db.game_events.aggregate(pipeline).to_list(length=1000)
+    # Group again (lesson_events has no school_code — we need to join). Use users table instead.
+    # Cleaner: aggregate weekly_scores which already carry school_code.
+    ws_pipeline = [
+        {"$match": {"created_at": {"$gte": start, "$lt": end}}},
+        {"$group": {
+            "_id": {"school_code": "$school_code", "user_id": "$user_id"},
+            "user_xp": {"$sum": "$xp"},
+        }},
+        {"$group": {
+            "_id": "$_id.school_code",
+            "total_xp": {"$sum": "$user_xp"},
+            "active_students": {"$sum": 1},
+        }},
+        {"$match": {"_id": {"$ne": None}}},
+    ]
+    rows = await db.weekly_scores.aggregate(ws_pipeline).to_list(length=1000)
+
+    results = []
+    for r in rows:
+        code = r["_id"]
+        total_xp = r.get("total_xp", 0)
+        active = max(1, r.get("active_students", 1))
+        avg = total_xp / active
+        school = await db.schools.find_one({"code": code}, {"_id": 0})
+        results.append({
+            "school_code": code,
+            "school_name": school.get("name") if school else code,
+            "city": school.get("city") if school else None,
+            "state": school.get("state") if school else None,
+            "total_xp": total_xp,
+            "active_students": active,
+            "avg_xp_per_active_student": round(avg, 2),
+        })
+    results.sort(key=lambda x: -x["avg_xp_per_active_student"])
+    for i, r in enumerate(results[:10], start=1):
+        r["rank"] = i
+    return {"season": label, "start": start.isoformat(), "end": end.isoformat(), "top_schools": results[:10]}
+
+
+# -------------------------------------------------------------------
+# Push notifications (Emergent SuprSend relay)
+# -------------------------------------------------------------------
+_push_client = httpx.AsyncClient(
+    base_url=PUSH_BASE_URL,
+    headers={"X-Push-Key": EMERGENT_PUSH_KEY},
+    timeout=10.0,
+)
+
+
+class RegisterPushBody(BaseModel):
+    user_id: str
+    platform: str
+    device_token: str
+
+
+@api.post("/register-push", status_code=201)
+async def register_push(body: RegisterPushBody, authorization: Optional[str] = Header(None)):
+    # Require an authenticated user; ensure user_id matches
+    u = await current_user(authorization)
+    if body.user_id != u.user_id:
+        raise HTTPException(403, "user_id mismatch")
+    try:
+        resp = await _push_client.post("/api/v1/push/users/register", json=body.model_dump())
+        if resp.status_code == 401:
+            raise HTTPException(500, "EMERGENT_PUSH_KEY missing or invalid")
+        if resp.status_code >= 500:
+            raise HTTPException(502, "Push provider unavailable")
+        resp.raise_for_status()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("register-push failed: %s", e)
+        raise HTTPException(502, "Push provider unreachable")
+    await db.users.update_one({"user_id": u.user_id}, {"$set": {"push_platform": body.platform}})
+    return {"status": "registered"}
+
+
+async def send_push(recipients: List[str], data: dict, idempotency_key: Optional[str] = None):
+    if not recipients:
+        return
+    if len(recipients) > 100:
+        raise ValueError("max 100 recipients per /trigger call")
+    if "title" not in data or "message" not in data:
+        raise ValueError("data must include title and message")
+    payload: dict = {"recipients": recipients, "data": data}
+    if idempotency_key:
+        payload["$idempotency_key"] = idempotency_key
+    resp = await _push_client.post("/api/v1/push/trigger", json=payload)
+    if resp.status_code == 401:
+        raise HTTPException(500, "EMERGENT_PUSH_KEY missing or invalid")
+    if resp.status_code >= 500:
+        raise HTTPException(502, "Push provider unavailable")
+    resp.raise_for_status()
+
+
+@api.post("/push/streak-reminder")
+async def push_streak_reminder(authorization: Optional[str] = Header(None)):
+    """Send a daily streak reminder to users who have a streak but haven't been active today.
+    Callable manually or by a cron job. Requires an authenticated user (any role)."""
+    _ = await current_user(authorization)
+    today = utcnow().date()
+    cursor = db.users.find(
+        {"streak": {"$gte": 1}, "push_platform": {"$exists": True}},
+        {"_id": 0, "user_id": 1, "name": 1, "last_activity_at": 1, "streak": 1},
+    )
+    users = await cursor.to_list(length=1000)
+    to_notify = []
+    for user in users:
+        la = user.get("last_activity_at")
+        if isinstance(la, datetime):
+            if la.astimezone(timezone.utc).date() == today:
+                continue
+        to_notify.append(user["user_id"])
+
+    sent = 0
+    for chunk_start in range(0, len(to_notify), 100):
+        chunk = to_notify[chunk_start:chunk_start + 100]
+        try:
+            await send_push(
+                recipients=chunk,
+                data={
+                    "title": "¡Tu racha te espera! 🔥",
+                    "message": "Practica 5 minutos hoy para no perder tu racha en Hack-Seguro.",
+                    "action_url": "/(tabs)/",
+                },
+                idempotency_key=f"streak-{today.isoformat()}-{chunk_start}",
+            )
+            sent += len(chunk)
+        except Exception as e:
+            logger.warning("push chunk failed: %s", e)
+    return {"scheduled": len(to_notify), "sent": sent, "date": today.isoformat()}
 
 
 # -------------------------------------------------------------------
