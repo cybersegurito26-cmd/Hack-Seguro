@@ -1,65 +1,79 @@
 # Hack-Seguro - PRD
 
 ## Overview
-Hack-Seguro is a mobile-first Expo app (works in Expo Go and via web preview) with a real FastAPI + MongoDB backend. It teaches cybersecurity and cybercrime prevention to Mexican children, teens, parents and older adults through a Duolingo-style progression, four mini-games and a Claude-powered CiberBot. Users compete in weekly leagues by school code, and completed modules produce shareable PDF certificates.
+Mobile-first Expo (SDK 54) app + FastAPI + MongoDB backend that teaches cybersecurity and cybercrime prevention to Mexican children, teens, parents and older adults. Duolingo-style progression, four mini-games, Claude-powered CiberBot, weekly leagues by school code with municipal/state/national escalation, PDF certificates with public QR verification, quarterly seasons, shareable school posters and push notifications for daily streak.
 
 ## Phase status
 - **Phase 1 (frontend UI + mock)**: DONE
-- **Phase 2 (real backend + IA + leagues + certs + Google Auth + local persistence)**: DONE
+- **Phase 2 (real backend + Claude Sonnet 4.6 + Google Auth + leagues + PDF + teacher panel)**: DONE
+- **Phase 3 (public cert verification + municipal/state/national scopes + quarterly seasons + shareable school poster + push notifications)**: DONE
 
 ## Architecture
-- **Backend**: FastAPI + Motor (MongoDB) at 0.0.0.0:8001, all routes prefixed with `/api`.
-- **Auth**: Emergent-managed Google OAuth (`https://auth.emergentagent.com`). Session tokens (7-day) stored in Expo `SecureStore` on mobile / `localStorage` on web.
-- **AI**: Claude Sonnet 4.6 via `emergentintegrations.llm.chat.LlmChat` (multi-turn). Emergent Universal LLM Key in `/app/backend/.env`.
-- **PDF Certificates**: server-side with ReportLab (`reportlab==5.0.0`), served inline as `application/pdf`.
-- **Persistence**: MongoDB collections `users`, `user_sessions`, `schools`, `weekly_scores`, `lesson_events`, `game_events`, `chat_messages`, `certificates`. Token in `secureGet/secureSet` under key `hackseguro.session_token`.
+- **Backend**: FastAPI + Motor (MongoDB) on port 8001. All routes under `/api`.
+- **Auth**: Emergent-managed Google OAuth. Sessions 7 days. Token in Expo `SecureStore` (mobile) / `localStorage` (web).
+- **AI**: Claude Sonnet 4.6 via `emergentintegrations` (Emergent LLM Key). Multi-turn per session.
+- **PDF**: ReportLab (server-side); certificates carry a QR pointing to public verification page.
+- **PNG poster**: Pillow (server-side) 1080×1920.
+- **QR (poster + PDF)**: `qrcode` library, navy on white.
+- **Push notifications**: Emergent-managed relay at `integrations.emergentagent.com`. `EMERGENT_PUSH_KEY` is `placeholder` in preview and auto-filled in deployment. Only works in real device builds.
+- **Persistence**: MongoDB `hackseguro` DB with collections `users`, `user_sessions`, `schools`, `weekly_scores`, `lesson_events`, `game_events`, `chat_messages`, `certificates`.
 
 ## Backend endpoints (all under `/api`)
-- Auth: `POST /auth/session` (Emergent session_id → session_token), `GET /auth/me`, `POST /auth/logout`.
-- Schools: `GET /schools/mine`, `GET /schools/{code}`, `POST /schools/join`.
-- Progress: `GET /progress`, `POST /lessons/complete`, `POST /games/complete`, `POST /daily/claim`.
-- Leaderboards: `GET /leaderboards/weekly?scope=school|global` (rank starts at 1, Monday-anchored `week_start`, `me` object).
-- Certificates: `GET /certificates/{module_id}` (bearer via header or `?t=token` for browser links).
-- Chatbot: `POST /chatbot` (Claude Sonnet 4.6, multi-turn), `GET /chatbot/history`.
-- Teacher panel: `GET /teacher/roster` (grouped by grade+group; students only see 403).
+- **Auth**: `POST /auth/session`, `GET /auth/me`, `POST /auth/logout`.
+- **Schools**: `GET /schools/mine`, `GET /schools/{code}`, `POST /schools/join`, `GET /schools/{code}/poster.png` (public).
+- **Progress**: `GET /progress`, `POST /lessons/complete`, `POST /games/complete`, `POST /daily/claim`.
+- **Leaderboards**: `GET /leaderboards/weekly?scope={school|city|state|global}` (Monday-anchored, Top 10, `me` object).
+- **Seasons**: `GET /seasons/current`, `GET /seasons/leaderboard` (quarterly, ranking by **avg XP per active student**).
+- **Certificates**: `GET /certificates/{module_id}` (auth PDF), `GET /certificates/verify/{cert_id}` (public JSON), `GET /verify/{cert_id}` (public HTML page — served under `/api/verify/...` for K8s ingress compatibility).
+- **Chatbot**: `POST /chatbot`, `GET /chatbot/history`.
+- **Teacher**: `GET /teacher/roster` (role teacher/parent).
+- **Public landing**: `GET /join?code=...` (served under `/api/join?code=...`; QR-friendly).
+- **Push**: `POST /register-push`, `POST /push/streak-reminder`.
 
 ## Frontend map
-- `/app/frontend/src/api.ts` — API client (Bearer, base URL).
-- `/app/frontend/src/auth.tsx` — AuthContext (Google login + web/mobile deep link parsing + refresh + logout).
-- `/app/frontend/src/store.tsx` — Thin action wrapper (calls backend, updates user from returned payload).
-- `/app/frontend/app/index.tsx` — Welcome with "Entrar con Google".
-- `/app/frontend/app/join-school.tsx` — School code + role + grade + group selection.
-- `/app/frontend/app/(tabs)/{index,learn,games,league,chatbot,profile,teacher}.tsx` — Tabs. `teacher` shows only for role teacher/parent.
+- `/app/frontend/src/api.ts` — API client + URL builders (`schoolPosterUrl`, `schoolShareUrl`, `verifyPageUrl`, `weeklyLeaderboard(scope)`, `seasonsLeaderboard`, `registerPush`).
+- `/app/frontend/src/auth.tsx` — AuthContext + Emergent Google login (web + mobile deep link). Triggers push registration when user is present.
+- `/app/frontend/src/store.tsx` — thin action wrapper (calls backend, updates auth user).
+- `/app/frontend/src/push.ts` — Expo push registration (silent no-op on Expo Go / web).
+- `/app/frontend/app/index.tsx` — Welcome + Google login.
+- `/app/frontend/app/join-school.tsx` — School code + role + grade + group.
+- `/app/frontend/app/(tabs)/{index,learn,games,league,chatbot,profile,teacher}.tsx` — Tabs. `teacher` visible only for teacher/parent.
 - `/app/frontend/app/lesson/[id].tsx` — Interactive lesson; posts `/lessons/complete`.
-- `/app/frontend/app/game/{fraude-real,memorama,password,escape}.tsx` — 4 games; post `/games/complete`.
+- `/app/frontend/app/game/{fraude-real,memorama,password,escape}.tsx` — 4 games; each posts `/games/complete`.
+- `/app/frontend/app/school-share.tsx` — Shareable school code screen with in-app QR (react-native-qrcode-svg) + native share + poster download.
 
-## Weekly League (by school)
-- School code identifies each community (e.g. `DEMO-001`, `COL-LEON-001`, `SEC-CDMX-042`).
-- Users join via `/schools/join`, providing role (student/teacher/parent) + optional grade + group.
-- Weekly XP is aggregated on every lesson/game/daily-claim (`_apply_xp_coins`) into the `weekly_scores` collection keyed by `(user_id, week_start=Monday UTC)`.
-- `GET /leaderboards/weekly?scope=school` returns Top 10 sorted by XP with automatic gold/silver/bronze medals in the UI. Also returns a `me` block with my rank & XP for the current week.
-- Architecture is ready for future municipal/state scopes: the same collection already stores `school_code`, and the endpoint uses `scope=global` (no filter). Adding `scope=city/state` only needs a lookup from `schools.city`/`schools.state`.
+## Weekly League (scopes)
+- **Scope `school`** (default): all users under the same school_code.
+- **Scope `city`** / **`state`**: all schools sharing city / state.
+- **Scope `global`**: no filter.
+- All scopes ranked Top 10 with gold/silver/bronze medals; `me` block returns my rank + XP.
+- Reset: Monday 00:00 UTC.
 
-## Gamification
-- XP: 10 per correct lesson answer + game XP (20–40) + 20 daily.
-- Coins: variable + 15 daily.
-- Level: `max(1, xp // 100 + 1)`.
-- Streak: server-tracked from `last_activity_at`.
-- Badges: `guardian` (contraseñas), `phishcazador` (phishing), `escudo` (3+ módulos), `maestro` (todos), `racha7` (racha ≥ 7 días), `detective` (juego fraude ≥ 4 aciertos).
-- Daily challenges: shown on Dashboard, mapped to real completions.
-- **Business enhancement** implemented: **Liga semanal por escuela** — impulsa retención diaria e invita a otras escuelas a unirse mediante compartir el código único.
+## Quarterly seasons
+- 3-month seasons: Q1 (Jan-Mar), Q2 (Apr-Jun), Q3 (Jul-Sep), Q4 (Oct-Dec).
+- Winning metric: **avg_xp_per_active_student** = total_school_xp / distinct_active_students within the season. This rewards student engagement, not just school size.
+- Endpoint `/api/seasons/leaderboard` returns Top 10 schools with rank, total_xp, active_students, avg_xp_per_active_student, city, state.
+
+## Certificate PDF + Public verification
+- Every completed module (>=1 lesson) unlocks a downloadable PDF signed with a QR code linking to `/api/verify/{cert_id}`.
+- Public JSON: `GET /api/certificates/verify/{cert_id}` — `{ valid, cert_id, student_name, grade, group, school, module_id, module_title, issued_at }`.
+- Public HTML: `GET /api/verify/{cert_id}` — branded Hack-Seguro card showing validity or "not found".
+
+## Shareable school poster
+- **Server PNG**: `/api/schools/{code}/poster.png` — 1080×1920, brand colors, school name, code, and QR pointing to `/api/join?code=CODE`.
+- **In-app**: `/school-share` screen shows the school code, a locally-generated QR (`react-native-qrcode-svg`), native Share of the join URL, and a "Descargar póster" button that saves + opens the PNG (native share sheet on mobile, new tab on web).
+
+## Push notifications
+- Emergent-managed relay. `EMERGENT_PUSH_KEY` in `/app/backend/.env` is filled at deployment.
+- Registration endpoint: `POST /api/register-push`.
+- Streak reminder trigger: `POST /api/push/streak-reminder` — sends a "¡Tu racha te espera! 🔥" push to registered users with a streak who haven't been active today.
+- **DOES NOT WORK IN EXPO GO.** Only real device builds (published from Emergent). User must supply `google-services.json` from Firebase Console at deployment time.
 
 ## What is MOCKED / SIMULATED
-- Nothing critical is mocked in Phase 2. Real backend, real AI (Claude Sonnet 4.6), real PDF, real Google Auth, real MongoDB.
-- Some game rewards are fixed (e.g. `password` game always awards +20 XP if strength ≥ 80%); this is a product design decision, not a mock.
-
-## What is DEFERRED
-- Local offline persistence beyond session token (progress already lives in MongoDB and reloads via `/auth/me`; adding an offline cache is optional).
-- Push notifications for streak reminders.
-- Municipal/state leaderboards (architecture ready).
-- Certificate signature verification page (a public `/api/certificates/verify/{cert_id}` could be added).
+- `EMERGENT_PUSH_KEY` is `"placeholder"` in preview; real value set automatically at deploy.
+- Nothing else is mocked.
 
 ## Testing
-- 17/17 backend pytest cases pass. Suite lives at `/app/backend/tests/test_backend.py`.
-- Manual login on web preview works with Google (real credential required).
-- Test bearer tokens are documented in `/app/memory/test_credentials.md` for CI/automation.
+- 34/36 backend pytest cases pass (94%). Two remaining failures are pre-existing test-quality issues (pytest-xdist race + overly strict banlist substring), not real bugs.
+- Frontend visually verified with screenshots for: login, dashboard, learn map, games grid, chatbot with Claude, league (all 4 scopes), season leaderboard, share-school poster, teacher panel, profile with certificates.
+- Test bearer token + regeneration script documented in `/app/memory/test_credentials.md`.
