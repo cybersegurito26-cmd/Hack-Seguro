@@ -108,8 +108,8 @@ export const api = {
     apiFetch<any>(`/certificates/verify/${cert_id}`, { auth: false }),
 
   schoolPosterUrl: (code: string) => `${BASE_URL}/api/schools/${encodeURIComponent(code)}/poster.png`,
-  schoolShareUrl: (code: string) => `${BASE_URL}/join?code=${encodeURIComponent(code)}`,
-  verifyPageUrl: (cert_id: string) => `${BASE_URL}/verify/${encodeURIComponent(cert_id)}`,
+  schoolShareUrl: (code: string) => `${BASE_URL}/api/join?code=${encodeURIComponent(code)}`,
+  verifyPageUrl: (cert_id: string) => `${BASE_URL}/api/verify/${encodeURIComponent(cert_id)}`,
 
   chat: (session_id: string, message: string) =>
     apiFetch<{ reply: string }>("/chatbot", { method: "POST", body: { session_id, message } }),

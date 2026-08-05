@@ -650,7 +650,7 @@ def _draw_certificate(name: str, module_title: str, cert_id: str, when: datetime
                         f"Emitido el {when.strftime('%d/%m/%Y')} · ID: {cert_id}")
 
     # QR code for verification
-    verify_url = f"{PUBLIC_BASE_URL}/verify/{cert_id}"
+    verify_url = f"{PUBLIC_BASE_URL}/api/verify/{cert_id}"
     try:
         qr_png = _qr_png_bytes(verify_url, 220)
         qr_img = ImageReader(io.BytesIO(qr_png))
@@ -871,7 +871,7 @@ VERIFY_HTML_TEMPLATE = """<!doctype html>
 </body></html>"""
 
 
-@app.get("/verify/{cert_id}")
+@api.get("/verify/{cert_id}")
 async def verify_certificate_html(cert_id: str):
     data = await verify_certificate_json(cert_id)
     if not data["valid"]:
@@ -888,7 +888,7 @@ async def verify_certificate_html(cert_id: str):
             school_line = f'<div class="row">Escuela: <strong>{s.get("name")}</strong> · {s.get("city", "")} {s.get("state", "")}</div>'
         grade_line = ""
         if data.get("grade") or data.get("group"):
-            grade_line = f'<div class="row">Grupo: <strong>{data.get("grade") or "?"}° {data.get("group") or ""}</strong></div>'
+            grade_line = f'<div class="row">Grupo: <strong>{data.get("grade") or "?"} {data.get("group") or ""}</strong></div>'
         issued = (data.get("issued_at") or "")[:10]
         content = f"""
           <span class="badge valid">✓ Certificado válido</span>
@@ -959,12 +959,12 @@ def _generate_school_poster(school: dict, share_url: str) -> bytes:
     return buf.getvalue()
 
 
-@app.get("/api/schools/{code}/poster.png")
+@api.get("/schools/{code}/poster.png")
 async def school_poster(code: str):
     school = await db.schools.find_one({"code": code.upper()}, {"_id": 0})
     if not school:
         raise HTTPException(404, "Escuela no encontrada")
-    share_url = f"{PUBLIC_BASE_URL}/join?code={code.upper()}"
+    share_url = f"{PUBLIC_BASE_URL}/api/join?code={code.upper()}"
     png = _generate_school_poster(school, share_url)
     return Response(
         content=png,
@@ -973,7 +973,7 @@ async def school_poster(code: str):
     )
 
 
-@app.get("/join")
+@api.get("/join")
 async def join_landing(code: Optional[str] = None):
     """Public landing page that installs prompt scans open to."""
     code = (code or "").upper()
@@ -1026,25 +1026,6 @@ async def season_leaderboard(authorization: Optional[str] = Header(None)):
     _ = await current_user(authorization)
     start, end, label = _current_season_bounds()
 
-    pipeline = [
-        {"$match": {"created_at": {"$gte": start, "$lt": end}}},
-        {"$group": {
-            "_id": {"user_id": "$user_id", "school_code": "$school_code"},
-            "xp_earned": {"$sum": "$xp"},
-        }},
-        {"$group": {
-            "_id": "$_id.school_code",
-            "total_xp": {"$sum": "$xp_earned"},
-            "active_students": {"$sum": 1},
-        }},
-        {"$match": {"_id": {"$ne": None}, "active_students": {"$gte": 1}}},
-    ]
-
-    # Merge lesson_events + game_events XP per user per school
-    lesson_rows = await db.lesson_events.aggregate(pipeline).to_list(length=1000)
-    game_rows = await db.game_events.aggregate(pipeline).to_list(length=1000)
-    # Group again (lesson_events has no school_code — we need to join). Use users table instead.
-    # Cleaner: aggregate weekly_scores which already carry school_code.
     ws_pipeline = [
         {"$match": {"created_at": {"$gte": start, "$lt": end}}},
         {"$group": {

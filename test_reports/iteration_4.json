@@ -1,0 +1,43 @@
+{
+  "summary": "Phase 3 retest after ingress-routing fix. All 5 originally failing/target endpoints now PASS against public URL https://ciber-educativo.preview.emergentagent.com. Test suite: 34/36 pytest cases PASS. The 2 remaining failures are pre-existing, unrelated to this fix (see notes). Specifically verified: (1) GET /api/verify/HS-BAD-ID → 200 text/html + contains 'Certificado no encontrado'. (2) GET /api/verify/HS-B37E6ED7 → 200 text/html + contains 'Certificado válido', 'Estudiante Prueba', 'Contraseñas seguras'. (3) GET /api/join?code=DEMO-001 → 200 text/html + mentions DEMO-001. (4) GET /api/join → 200 generic landing HTML. (5) GET /api/schools/DEMO-001/poster.png → 200 image/png, 98129 bytes, 1080x1920. (6) GET /api/seasons/leaderboard → 200 with top_schools sorted desc by avg_xp_per_active_student, rank starts at 1, all required keys present. (7) Phase-2 regression: all 15/17 pass (2 flaky failures pre-existing). Code inspection confirms `verify_url = f\"{PUBLIC_BASE_URL}/api/verify/{cert_id}\"` (server.py:653) and `share_url = f\"{PUBLIC_BASE_URL}/api/join?code={code.upper()}\"` (server.py:967) — both QR builders now emit ingress-reachable URLs. Both routes are registered on the /api router (@api.get at server.py:874 and 976). Dead-code cleanup in season_leaderboard verified (still lines 1044-1045 aggregate but kept for future use). No regressions detected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/games/complete", "issue": "test_game_complete_fraude asserts u['xp'] == base_xp + 30 but got 320 vs 260+30=290. Pre-existing test-order/parallel-worker race (pytest-xdist gw0/gw1 both touch the same student user); NOT a regression from this fix. Backend logic itself is correct (XP=score*6=30 for score=5)."},
+      {"endpoint": "POST /api/chatbot", "issue": "test_chatbot_spanish_reply overly-strict: bans substring 'curp' but the LLM used it in an educational anti-pattern context ('no uses tu CURP como contraseña'). Not asking for personal data. Pre-existing, not related to Phase-3 fix."},
+      {"endpoint": "GET /api/certificates/verify/{cert_id}", "issue": "Returns HTTP 200 with {valid:false} for unknown cert_id (spec-intended but breaks CDN 404 semantics). Carried over from iteration_3."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase3.py",
+    "/app/backend/tests/test_backend.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/all_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: Fix test_chatbot_spanish_reply — the 'curp' banlist substring match is too aggressive; either require a stronger phrase like 'dame tu CURP' / 'cuál es tu CURP', or remove 'curp'/'rfc' from the forbidden list (the LLM's educational content legitimately mentions them as things NOT to use).",
+    "OPTIONAL: Isolate parallel-worker state in test_game_complete_fraude (currently order-dependent because pytest-xdist workers share the student user in Mongo). Either add xdist_group markers to serialize state-mutating tests or snapshot XP inside a fixture with locking.",
+    "OPTIONAL (carried over): Split server.py (~1196 lines) into routers/ modules before Phase 4.",
+    "OPTIONAL: Remove now-dead `lesson_rows`/`game_rows` aggregations in season_leaderboard (server.py ~1044-1045) if truly unused after cleanup."
+  ],
+  "critical_code_review_comments": [
+    "Confirmed: /verify and /join are now under @api router (server.py:874, 976) and both QR URL builders emit /api/verify/... and /api/join?code=... — ingress correctly forwards to FastAPI.",
+    "server.py still ~1200 lines; splitting into routers/ remains recommended for Phase 4.",
+    "Chatbot test's forbidden-substring approach is fragile against educational answers; recommend upgrading to phrase-level checks."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase3.py (updated /verify → /api/verify, /join → /api/join, added test_join_landing_generic)"
+  ],
+  "success_rate": {"backend": "94% (34/36 pytest). All 5 target endpoints from this fix PASS. Phase-3 tests: 17/17 pass. Phase-2 tests: 15/17 pass (2 flaky, pre-existing).", "frontend": "N/A (skipped per request)"},
+  "seed_data_creation": "Reused existing STUDENT_TOKEN=test-token-7a69def0cf734327 (user_9aabfbd69c36) and TEACHER_TOKEN=test-token-749533d90eb84419. Certificate HS-B37E6ED7 already present for passwords module. No new seed data.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Base URL: https://ciber-educativo.preview.emergentagent.com. Run: `cd /app/backend && STUDENT_TOKEN=test-token-7a69def0cf734327 TEACHER_TOKEN=test-token-749533d90eb84419 python -m pytest tests/ -v --junitxml=/app/test_reports/pytest/all_results.xml`. Ingress fix confirmed — /api/verify/{cert_id} and /api/join are the correct public paths. Remaining 2 pytest failures (test_game_complete_fraude, test_chatbot_spanish_reply) are pre-existing test-quality issues, NOT backend regressions.",
+  "rca_of_issue": "Root cause was that /verify and /join were mounted on the raw `app` object without the /api prefix, so K8s ingress forwarded those paths to Expo (port 3000) instead of FastAPI (port 8001). Fix (verified in iteration 4): both endpoints moved onto the /api APIRouter (server.py:874 @api.get('/verify/{cert_id}'), server.py:976 @api.get('/join')), and both QR URL builders updated to include the /api prefix (server.py:653 verify_url, server.py:967 share_url). Confirmed reachable publicly via curl against ciber-educativo.preview.emergentagent.com for /api/verify/HS-BAD-ID, /api/verify/HS-B37E6ED7, /api/join, /api/join?code=DEMO-001."
+}

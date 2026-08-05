@@ -28,11 +28,16 @@ class TestSchoolPoster:
         assert r.status_code == 404
 
     def test_join_landing_html(self, anon_client, base_url):
-        r = anon_client.get(f"{base_url}/join?code=DEMO-001")
+        r = anon_client.get(f"{base_url}/api/join?code=DEMO-001")
         assert r.status_code == 200
         assert "text/html" in r.headers.get("content-type", "")
         body = r.text
         assert "DEMO-001" in body, "landing HTML must mention DEMO-001"
+
+    def test_join_landing_generic(self, anon_client, base_url):
+        r = anon_client.get(f"{base_url}/api/join")
+        assert r.status_code == 200
+        assert "text/html" in r.headers.get("content-type", "")
 
 
 # ----------------- Certificate public verification -----------------
@@ -45,7 +50,7 @@ class TestCertificateVerify:
         assert data.get("cert_id") == "HS-BAD-ID"
 
     def test_verify_bad_id_html(self, anon_client, base_url):
-        r = anon_client.get(f"{base_url}/verify/HS-BAD-ID")
+        r = anon_client.get(f"{base_url}/api/verify/HS-BAD-ID")
         assert r.status_code == 200
         assert "text/html" in r.headers.get("content-type", ""), r.headers
         assert "Certificado no encontrado" in r.text
@@ -86,7 +91,7 @@ class TestCertificateVerify:
         assert data["school"]["code"] == "DEMO-001"
 
         # HTML endpoint
-        h = anon_client.get(f"{base_url}/verify/{cert_id}")
+        h = anon_client.get(f"{base_url}/api/verify/{cert_id}")
         assert h.status_code == 200
         assert "text/html" in h.headers.get("content-type", ""), h.headers
         assert "Certificado v" in h.text  # 'válido' (utf-8)
