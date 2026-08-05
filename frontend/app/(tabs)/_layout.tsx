@@ -1,13 +1,19 @@
 import React from "react";
-import { Tabs } from "expo-router";
+import { Tabs, Redirect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { View, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { colors, spacing } from "@/src/theme";
+import { useApp } from "@/src/store";
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
+  const { profile } = useApp();
+
+  if (!profile) {
+    return <Redirect href="/" />;
+  }
   return (
     <Tabs
       screenOptions={{

@@ -9,7 +9,6 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 
 import { colors, spacing, radius, fontSize, shadow } from "@/src/theme";
 import { useApp, XP_PER_LEVEL } from "@/src/store";
@@ -17,7 +16,6 @@ import { PROFILES } from "@/src/mock";
 
 export default function ProfileScreen() {
   const app = useApp();
-  const router = useRouter();
   const xpInLevel = app.xp % XP_PER_LEVEL;
   const xpPercent = Math.min(100, (xpInLevel / XP_PER_LEVEL) * 100);
   const profileMeta = PROFILES.find((p) => p.id === app.profile) || PROFILES[0];
@@ -110,7 +108,6 @@ export default function ProfileScreen() {
           style={styles.dangerBtn}
           onPress={() => {
             app.reset();
-            router.replace("/");
           }}
           testID="reset-button"
           activeOpacity={0.85}
