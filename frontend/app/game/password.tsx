@@ -49,11 +49,11 @@ export default function PasswordGame() {
   const [pwd, setPwd] = useState("");
   const s = useMemo(() => score(pwd), [pwd]);
 
-  const finish = () => {
+  const finish = async () => {
     if (s.strength >= 80) {
-      app.addXP(20);
-      app.addCoins(10);
-      app.unlockBadge("guardian");
+      try {
+        await app.completeGame("password", s.checks.filter((c) => c.ok).length, s.checks.length);
+      } catch {}
     }
     router.back();
   };

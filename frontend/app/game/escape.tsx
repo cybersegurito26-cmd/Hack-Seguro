@@ -23,16 +23,14 @@ export default function EscapeGame() {
       setTimeout(() => {
         setFeedback(null);
         if (opt.next === "win") {
-          app.addXP(40);
-          app.addCoins(20);
+          app.completeGame("escape", 3, 3).catch(() => {});
           setWon(true);
         }
         setNodeId(opt.next);
       }, 900);
     } else {
       if (opt.next === "win") {
-        app.addXP(40);
-        app.addCoins(20);
+        app.completeGame("escape", 3, 3).catch(() => {});
         setWon(true);
       }
       setNodeId(opt.next);

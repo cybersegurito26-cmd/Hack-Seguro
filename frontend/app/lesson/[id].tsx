@@ -52,26 +52,20 @@ export default function LessonScreen() {
       setCorrectCount((c) => c + 1);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     } else {
-      app.loseHeart();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
     }
   };
 
-  const onContinue = () => {
+  const onContinue = async () => {
     setChecked(false);
     setSelected(null);
     if (stepIndex + 1 < total) {
       setStepIndex((i) => i + 1);
     } else {
-      // finished lesson
-      const earnedXp = correctCount * 10 + (isCorrect ? 10 : 0);
-      const earnedCoins = 5 + (correctCount + (isCorrect ? 1 : 0));
-      app.addXP(earnedXp);
-      app.addCoins(earnedCoins);
-      app.completeLesson(module.id);
-      // simple badge unlocks
-      if (module.id === "passwords") app.unlockBadge("guardian");
-      if (module.id === "phishing") app.unlockBadge("phishcazador");
+      const finalCorrect = correctCount + (isCorrect ? 1 : 0);
+      try {
+        await app.addXPCoinsFromLesson(module.id, finalCorrect, total);
+      } catch {}
       setFinished(true);
     }
   };
@@ -140,7 +134,7 @@ export default function LessonScreen() {
         </View>
         <View style={styles.heartsChip}>
           <Ionicons name="heart" size={18} color={colors.danger} />
-          <Text style={styles.heartsText}>{app.hearts}</Text>
+          <Text style={styles.heartsText}>{app.user?.hearts ?? 5}</Text>
         </View>
       </View>
 

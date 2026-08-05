@@ -1,138 +1,64 @@
-import React, { createContext, useContext, useState, useMemo, useCallback } from "react";
-import { ProfileType, BADGES, Badge } from "./mock";
-
-type AccessibilityPrefs = {
-  largeText: boolean;
-  highContrast: boolean;
-};
-
-type State = {
-  profile: ProfileType | null;
-  name: string;
-  avatar: string;
-  xp: number;
-  level: number;
-  coins: number;
-  streak: number;
-  hearts: number;
-  completedLessons: Record<string, number>; // moduleId -> lessons completed
-  badges: Badge[];
-  dailyClaimed: boolean;
-  a11y: AccessibilityPrefs;
-};
+// Store: thin action layer that calls the backend and updates the auth user.
+// Reads user state from AuthProvider.
+import React, { createContext, useContext, useCallback, useMemo } from "react";
+import { api } from "@/src/api";
+import { useAuth, AppUser } from "@/src/auth";
 
 type Actions = {
-  setProfile: (p: ProfileType, name?: string) => void;
-  addXP: (amount: number) => void;
-  addCoins: (amount: number) => void;
-  loseHeart: () => void;
-  completeLesson: (moduleId: string) => void;
-  unlockBadge: (id: string) => void;
-  claimDaily: () => void;
-  toggleLargeText: () => void;
-  toggleHighContrast: () => void;
-  reset: () => void;
+  addXPCoinsFromLesson: (moduleId: string, correct: number, total: number) => Promise<any>;
+  completeGame: (gameId: string, score: number, total: number) => Promise<any>;
+  claimDaily: () => Promise<any>;
+  joinSchool: (code: string, grade?: string, group?: string, role?: string) => Promise<any>;
 };
+
+type Store = {
+  user: AppUser | null;
+} & Actions;
 
 const XP_PER_LEVEL = 100;
-
-const initial: State = {
-  profile: null,
-  name: "Explorador",
-  avatar: "shield-checkmark",
-  xp: 40,
-  level: 1,
-  coins: 25,
-  streak: 3,
-  hearts: 5,
-  completedLessons: {},
-  badges: BADGES,
-  dailyClaimed: false,
-  a11y: { largeText: false, highContrast: false },
-};
-
-const Ctx = createContext<(State & Actions) | null>(null);
+const Ctx = createContext<Store | null>(null);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<State>(initial);
+  const { user, setUserLocal } = useAuth();
 
-  const addXP = useCallback((amount: number) => {
-    setState((s) => {
-      const newXp = s.xp + amount;
-      const newLevel = Math.max(1, Math.floor(newXp / XP_PER_LEVEL) + 1);
-      return { ...s, xp: newXp, level: newLevel };
-    });
-  }, []);
+  const addXPCoinsFromLesson = useCallback(async (moduleId: string, correct: number, total: number) => {
+    const res = await api.completeLesson(moduleId, correct, total);
+    if (res?.user) setUserLocal(res.user);
+    return res;
+  }, [setUserLocal]);
 
-  const addCoins = useCallback((amount: number) => {
-    setState((s) => ({ ...s, coins: s.coins + amount }));
-  }, []);
+  const completeGame = useCallback(async (gameId: string, score: number, total: number) => {
+    const res = await api.completeGame(gameId, score, total);
+    if (res?.user) setUserLocal(res.user);
+    return res;
+  }, [setUserLocal]);
 
-  const loseHeart = useCallback(() => {
-    setState((s) => ({ ...s, hearts: Math.max(0, s.hearts - 1) }));
-  }, []);
+  const claimDaily = useCallback(async () => {
+    const res = await api.claimDaily();
+    if (res?.user) setUserLocal(res.user);
+    return res;
+  }, [setUserLocal]);
 
-  const completeLesson = useCallback((moduleId: string) => {
-    setState((s) => ({
-      ...s,
-      completedLessons: {
-        ...s.completedLessons,
-        [moduleId]: (s.completedLessons[moduleId] || 0) + 1,
-      },
-    }));
-  }, []);
+  const joinSchool = useCallback(async (code: string, grade?: string, group?: string, role?: string) => {
+    const res = await api.joinSchool({ school_code: code, grade, group, role });
+    if (res?.user) setUserLocal(res.user);
+    return res;
+  }, [setUserLocal]);
 
-  const unlockBadge = useCallback((id: string) => {
-    setState((s) => ({
-      ...s,
-      badges: s.badges.map((b) => (b.id === id ? { ...b, unlocked: true } : b)),
-    }));
-  }, []);
-
-  const claimDaily = useCallback(() => {
-    setState((s) => {
-      if (s.dailyClaimed) return s;
-      return { ...s, dailyClaimed: true, coins: s.coins + 15, xp: s.xp + 20 };
-    });
-  }, []);
-
-  const setProfile = useCallback((p: ProfileType, name?: string) => {
-    setState((s) => ({ ...s, profile: p, name: name || s.name }));
-  }, []);
-
-  const toggleLargeText = useCallback(() => {
-    setState((s) => ({ ...s, a11y: { ...s.a11y, largeText: !s.a11y.largeText } }));
-  }, []);
-
-  const toggleHighContrast = useCallback(() => {
-    setState((s) => ({ ...s, a11y: { ...s.a11y, highContrast: !s.a11y.highContrast } }));
-  }, []);
-
-  const reset = useCallback(() => setState(initial), []);
-
-  const value = useMemo(
-    () => ({
-      ...state,
-      setProfile,
-      addXP,
-      addCoins,
-      loseHeart,
-      completeLesson,
-      unlockBadge,
-      claimDaily,
-      toggleLargeText,
-      toggleHighContrast,
-      reset,
-    }),
-    [state, setProfile, addXP, addCoins, loseHeart, completeLesson, unlockBadge, claimDaily, toggleLargeText, toggleHighContrast, reset]
-  );
+  const value = useMemo<Store>(() => ({
+    user,
+    addXPCoinsFromLesson,
+    completeGame,
+    claimDaily,
+    joinSchool,
+  }), [user, addXPCoinsFromLesson, completeGame, claimDaily, joinSchool]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function useApp() {
   const c = useContext(Ctx);
-  if (!c) throw new Error("useApp must be used within AppProvider");
+  if (!c) throw new Error("useApp must be used inside AppProvider");
   return c;
 }
 

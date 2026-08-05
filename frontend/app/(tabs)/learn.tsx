@@ -16,7 +16,8 @@ import { useApp } from "@/src/store";
 
 export default function LearnScreen() {
   const router = useRouter();
-  const app = useApp();
+  const { user } = useApp();
+  const completed = user?.completed_lessons ?? {};
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -27,13 +28,12 @@ export default function LearnScreen() {
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {MODULES.map((m, index) => {
-          const completed = app.completedLessons[m.id] || 0;
+          const completedCount = completed[m.id] || 0;
           const total = m.lessons.length;
-          const progress = total > 0 ? completed / total : 0;
-          const isDone = completed >= total;
-          // First module is unlocked. Each next unlocks when previous has at least 1 completed lesson.
+          const progress = total > 0 ? completedCount / total : 0;
+          const isDone = completedCount >= total;
           const prevId = MODULES[index - 1]?.id;
-          const isUnlocked = index === 0 || (prevId && (app.completedLessons[prevId] || 0) >= 1);
+          const isUnlocked = index === 0 || (prevId && (completed[prevId] || 0) >= 1);
           const align = index % 2 === 0 ? "flex-start" : "flex-end";
 
           return (
@@ -81,7 +81,7 @@ export default function LearnScreen() {
                         />
                       </View>
                       <Text style={styles.progressLabel}>
-                        {completed}/{total}
+                        {completedCount}/{total}
                       </Text>
                     </View>
                   </View>

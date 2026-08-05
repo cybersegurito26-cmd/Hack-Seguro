@@ -1,0 +1,35 @@
+{
+  "summary": "Phase 2 backend regression: 17/17 pytest cases PASS against public URL https://ciber-educativo.preview.emergentagent.com. Verified health, DEMO-001 school seeding, invalid session -> 401, auth/me returns full user (school_code=DEMO-001, role=student, grade=6°, group=A), /lessons/complete (passwords, 3/3) grants +30 XP and unlocks 'guardian' badge, /games/complete (fraude, 5/6) grants +30 XP, +10 coins and unlocks 'detective', /daily/claim first call = +20 XP +15 coins and second call = 400, /leaderboards/weekly (school and global) returns rows sorted by XP desc with rank starting at 1 and week_start on Monday 00:00 UTC plus 'me' object, /certificates/passwords returns a valid non-empty PDF (magic %PDF), /certificates/phishing returns 400 for uncompleted module, /teacher/roster returns 403 for student token and 200 with groups list for teacher token, /schools/join returns 404 for invalid code and promotes role for DEMO-001, /chatbot returns a Spanish reply from Claude Sonnet 4.6 that does NOT ask for personal data. Frontend files exist for all 7 tabs (index, learn, games, league, chatbot, profile, teacher) plus _layout, root index.tsx, join-school.tsx and reference correct /api/* paths via src/api.ts. Google auth UI not exercised (real Google flow, per request).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_backend.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/results.xml"
+  ],
+  "action_items": [
+    "None blocking. Optional hardening: _seen_session_ids is an in-memory set — after a backend restart, a real Emergent session_id could be replayed. Consider persisting used session_ids in Mongo with a TTL. Low priority since the Emergent session_id itself is short-lived.",
+    "Optional: /chatbot depends on live Claude; add graceful timeout messaging on the client if the 502 branch triggers."
+  ],
+  "critical_code_review_comments": [
+    "server.py is a single 761-line file. Still readable, but consider splitting into routers/ (auth, schools, progress, leaderboards, certificates, chatbot, teacher) once Phase 3 begins.",
+    "Weekly leaderboard: relies on TTL-free weekly_scores collection scoped by week_start. Auto-reset is implicit (new Monday -> new documents). Old weeks accumulate; a cron/TTL for stale weeks would be nice but not required.",
+    "current_user helper is invoked correctly with await; all Mongo ops properly async; _id is projected out everywhere. Good.",
+    "Certificates endpoint accepts token via `?t=` query param — makes browser links possible; acceptable but note it is logged in server access logs. Fine for MVP."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (new)",
+    "/app/backend/tests/test_backend.py (new)"
+  ],
+  "success_rate": {"backend": "100% (17/17)", "frontend": "N/A (skipped per request; only file existence verified)"},
+  "seed_data_creation": "Inserted 2 test users into Mongo `hackseguro.users`: test.student@hackseguro.test (student, DEMO-001, 6°/A, token=test-token-7a69def0cf734327) and test.teacher@hackseguro.test (teacher, DEMO-001, token=test-token-749533d90eb84419). Both bearer sessions live for 7 days in `user_sessions`. Student progress was reset before the run for deterministic assertions.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend is at https://ciber-educativo.preview.emergentagent.com. Reuse /app/backend/tests/test_backend.py with STUDENT_TOKEN and TEACHER_TOKEN env vars, or regenerate via /tmp/make_session.py (safer to persist in /app/scripts if reruns are expected — copy is currently in /tmp which the pod may prune). Current live tokens: STUDENT=test-token-7a69def0cf734327 / TEACHER=test-token-749533d90eb84419. Chatbot test hits real Claude Sonnet 4.6 via emergentintegrations — expect ~5s latency.",
+  "rca_of_issue": "No bugs found."
+}

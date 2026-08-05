@@ -31,10 +31,10 @@ export default function FraudeRealGame() {
     setIndex((i) => i + 1);
   };
 
-  const finish = () => {
-    app.addXP(30);
-    app.addCoins(score * 2);
-    if (score >= 4) app.unlockBadge("detective");
+  const finish = async () => {
+    try {
+      await app.completeGame("fraude", score, cards.length);
+    } catch {}
     router.back();
   };
 

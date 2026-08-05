@@ -13,90 +13,116 @@ import { useRouter } from "expo-router";
 
 import { colors, spacing, radius, fontSize, shadow } from "@/src/theme";
 import { useApp, XP_PER_LEVEL } from "@/src/store";
-import { MODULES, DAILY_CHALLENGES } from "@/src/mock";
+import { MODULES, DAILY_CHALLENGES, BADGES } from "@/src/mock";
 
 export default function Dashboard() {
   const router = useRouter();
-  const app = useApp();
+  const { user, claimDaily } = useApp();
+  const today = new Date().toISOString().slice(0, 10);
+  const dailyClaimed = user?.daily_claim_date === today;
 
-  const xpInLevel = app.xp % XP_PER_LEVEL;
+  const xp = user?.xp ?? 0;
+  const level = user?.level ?? 1;
+  const coins = user?.coins ?? 0;
+  const hearts = user?.hearts ?? 5;
+  const streak = user?.streak ?? 0;
+  const completed = user?.completed_lessons ?? {};
+  const unlockedBadgeIds = new Set(user?.badges ?? []);
+  const badges = BADGES.map((b) => ({ ...b, unlocked: unlockedBadgeIds.has(b.id) }));
+
+  const xpInLevel = xp % XP_PER_LEVEL;
   const xpPercent = Math.min(100, (xpInLevel / XP_PER_LEVEL) * 100);
 
-  const recommended = MODULES.find((m) => (app.completedLessons[m.id] || 0) < m.lessons.length) || MODULES[0];
-  const totalUnlockedBadges = app.badges.filter((b) => b.unlocked).length;
+  const recommended = MODULES.find((m) => (completed[m.id] || 0) < m.lessons.length) || MODULES[0];
+  const totalUnlockedBadges = badges.filter((b) => b.unlocked).length;
+
+  const onClaim = async () => {
+    if (dailyClaimed) return;
+    try { await claimDaily(); } catch {}
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      {/* Sticky top header */}
       <View style={styles.stickyHeader} testID="dashboard-header">
         <View style={styles.greetingRow}>
           <View>
-            <Text style={styles.hello}>¡Hola, {app.name}! 👋</Text>
+            <Text style={styles.hello}>¡Hola, {user?.name?.split(" ")[0] || "Explorador"}! 👋</Text>
             <Text style={styles.subhello}>Sigue aprendiendo hoy</Text>
           </View>
           <View style={styles.streakChip} testID="streak-chip">
             <Ionicons name="flame" size={18} color={colors.streakFire} />
-            <Text style={styles.streakText}>{app.streak}</Text>
+            <Text style={styles.streakText}>{streak}</Text>
           </View>
         </View>
 
         <View style={styles.statsRow}>
-          <StatPill icon="star" iconColor={colors.warning} value={app.xp} label="XP" testID="stat-xp" />
-          <StatPill icon="cash" iconColor={colors.accentDark} value={app.coins} label="Monedas" testID="stat-coins" />
-          <StatPill icon="heart" iconColor={colors.danger} value={app.hearts} label="Vidas" testID="stat-hearts" />
+          <StatPill icon="star" iconColor={colors.warning} value={xp} label="XP" testID="stat-xp" />
+          <StatPill icon="cash" iconColor={colors.accentDark} value={coins} label="Monedas" testID="stat-coins" />
+          <StatPill icon="heart" iconColor={colors.danger} value={hearts} label="Vidas" testID="stat-hearts" />
         </View>
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Level card */}
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <View style={styles.levelCard} testID="level-card">
           <View style={styles.levelBadge}>
-            <Text style={styles.levelNum}>{app.level}</Text>
+            <Text style={styles.levelNum}>{level}</Text>
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.levelLabel}>Nivel {app.level} · Aprendiz Ciber</Text>
+            <Text style={styles.levelLabel}>Nivel {level} · Aprendiz Ciber</Text>
             <View style={styles.progressBar}>
               <View style={[styles.progressFill, { width: `${xpPercent}%` }]} />
             </View>
             <Text style={styles.progressText}>
-              {xpInLevel} / {XP_PER_LEVEL} XP para el nivel {app.level + 1}
+              {xpInLevel} / {XP_PER_LEVEL} XP para el nivel {level + 1}
             </Text>
           </View>
         </View>
 
-        {/* Daily reward */}
         <Pressable
           style={({ pressed }) => [
             styles.dailyChest,
             { transform: [{ scale: pressed ? 0.98 : 1 }] },
-            app.dailyClaimed && { opacity: 0.7 },
+            dailyClaimed && { opacity: 0.7 },
           ]}
-          onPress={() => !app.dailyClaimed && app.claimDaily()}
-          disabled={app.dailyClaimed}
+          onPress={onClaim}
+          disabled={dailyClaimed}
           testID="daily-chest"
         >
           <View style={styles.chestIcon}>
-            <Ionicons name={app.dailyClaimed ? "checkmark-circle" : "gift"} size={30} color={colors.brand} />
+            <Ionicons name={dailyClaimed ? "checkmark-circle" : "gift"} size={30} color={colors.brand} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.chestTitle}>
-              {app.dailyClaimed ? "¡Reclamado hoy!" : "Cofre diario"}
+              {dailyClaimed ? "¡Reclamado hoy!" : "Cofre diario"}
             </Text>
             <Text style={styles.chestSub}>
-              {app.dailyClaimed ? "Vuelve mañana para más" : "+15 monedas y +20 XP"}
+              {dailyClaimed ? "Vuelve mañana para más" : "+15 monedas y +20 XP"}
             </Text>
           </View>
-          {!app.dailyClaimed && (
+          {!dailyClaimed && (
             <View style={styles.chestCta}>
               <Text style={styles.chestCtaText}>Abrir</Text>
             </View>
           )}
         </Pressable>
 
-        {/* Recommended lesson */}
+        {/* League CTA */}
+        <TouchableOpacity
+          style={styles.leagueCard}
+          onPress={() => router.push("/(tabs)/league" as any)}
+          activeOpacity={0.9}
+          testID="league-card"
+        >
+          <View style={styles.leagueIconWrap}>
+            <Ionicons name="trophy" size={30} color={colors.brand} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.leagueTitle}>Liga semanal</Text>
+            <Text style={styles.leagueSub}>{user?.school_code || "Sin escuela"} · Top 10</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={22} color={colors.brand} />
+        </TouchableOpacity>
+
         <Text style={styles.sectionTitle}>Lección recomendada</Text>
         <TouchableOpacity
           activeOpacity={0.9}
@@ -127,7 +153,6 @@ export default function Dashboard() {
           <Text style={styles.bigPlayText}>Jugar ahora</Text>
         </TouchableOpacity>
 
-        {/* Daily challenges */}
         <Text style={styles.sectionTitle}>Retos de hoy</Text>
         <View style={styles.challengeList}>
           {DAILY_CHALLENGES.map((c) => (
@@ -146,11 +171,10 @@ export default function Dashboard() {
           ))}
         </View>
 
-        {/* Badges preview */}
         <View style={styles.badgesHeader}>
           <Text style={styles.sectionTitle}>Insignias</Text>
           <TouchableOpacity onPress={() => router.push("/(tabs)/profile" as any)} testID="see-all-badges">
-            <Text style={styles.linkText}>Ver todas ({totalUnlockedBadges}/{app.badges.length})</Text>
+            <Text style={styles.linkText}>Ver todas ({totalUnlockedBadges}/{badges.length})</Text>
           </TouchableOpacity>
         </View>
         <ScrollView
@@ -158,7 +182,7 @@ export default function Dashboard() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.badgeRow}
         >
-          {app.badges.map((b) => (
+          {badges.map((b) => (
             <View
               key={b.id}
               style={[styles.badge, !b.unlocked && styles.badgeLocked]}
@@ -186,17 +210,9 @@ export default function Dashboard() {
 }
 
 function StatPill({
-  icon,
-  iconColor,
-  value,
-  label,
-  testID,
+  icon, iconColor, value, label, testID,
 }: {
-  icon: any;
-  iconColor: string;
-  value: number;
-  label: string;
-  testID?: string;
+  icon: any; iconColor: string; value: number; label: string; testID?: string;
 }) {
   return (
     <View style={styles.statPill} testID={testID}>
@@ -217,11 +233,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: colors.border,
   },
-  greetingRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
+  greetingRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   hello: { fontSize: fontSize.lg, fontWeight: "800", color: colors.textPrimary },
   subhello: { fontSize: fontSize.sm, color: colors.textSecondary, marginTop: 2 },
   streakChip: {
@@ -234,11 +246,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
   },
   streakText: { fontWeight: "800", color: colors.streakFire },
-  statsRow: {
-    flexDirection: "row",
-    marginTop: spacing.md,
-    gap: spacing.sm,
-  },
+  statsRow: { flexDirection: "row", marginTop: spacing.md, gap: spacing.sm },
   statPill: {
     flex: 1,
     flexDirection: "row",
@@ -252,109 +260,62 @@ const styles = StyleSheet.create({
   },
   statValue: { fontSize: fontSize.base, fontWeight: "800", color: colors.textPrimary },
   statLabel: { fontSize: fontSize.xs, color: colors.textSecondary, marginLeft: 2 },
-
   scroll: { padding: spacing.lg, paddingBottom: spacing.xxl },
-
   levelCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: spacing.lg,
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: radius.lg,
-    gap: spacing.md,
-    ...shadow.card,
+    flexDirection: "row", alignItems: "center", padding: spacing.lg,
+    backgroundColor: colors.surfaceAlt, borderRadius: radius.lg, gap: spacing.md, ...shadow.card,
   },
   levelBadge: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.brand,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 3,
-    borderColor: colors.accent,
+    width: 56, height: 56, borderRadius: 28, backgroundColor: colors.brand,
+    alignItems: "center", justifyContent: "center", borderWidth: 3, borderColor: colors.accent,
   },
   levelNum: { color: colors.onBrand, fontSize: fontSize.lg, fontWeight: "800" },
   levelLabel: { fontSize: fontSize.base, fontWeight: "700", color: colors.textPrimary },
-  progressBar: {
-    height: 10,
-    backgroundColor: colors.surfaceElev,
-    borderRadius: 5,
-    marginTop: 8,
-    overflow: "hidden",
-  },
-  progressFill: {
-    height: "100%",
-    backgroundColor: colors.accent,
-    borderRadius: 5,
-  },
+  progressBar: { height: 10, backgroundColor: colors.surfaceElev, borderRadius: 5, marginTop: 8, overflow: "hidden" },
+  progressFill: { height: "100%", backgroundColor: colors.accent, borderRadius: 5 },
   progressText: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 4 },
-
   dailyChest: {
     marginTop: spacing.lg,
-    flexDirection: "row",
-    alignItems: "center",
-    padding: spacing.lg,
-    backgroundColor: "#EEF3FB",
-    borderRadius: radius.lg,
-    gap: spacing.md,
-    borderWidth: 2,
-    borderColor: colors.brand,
-    borderStyle: "dashed",
+    flexDirection: "row", alignItems: "center", padding: spacing.lg,
+    backgroundColor: "#EEF3FB", borderRadius: radius.lg, gap: spacing.md,
+    borderWidth: 2, borderColor: colors.brand, borderStyle: "dashed",
   },
-  chestIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: colors.accent,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  chestIcon: { width: 52, height: 52, borderRadius: 26, backgroundColor: colors.accent, alignItems: "center", justifyContent: "center" },
   chestTitle: { fontWeight: "800", color: colors.textPrimary, fontSize: fontSize.base },
   chestSub: { color: colors.textSecondary, fontSize: fontSize.sm, marginTop: 2 },
-  chestCta: {
-    backgroundColor: colors.brand,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 8,
-    borderRadius: radius.pill,
-  },
+  chestCta: { backgroundColor: colors.brand, paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill },
   chestCtaText: { color: colors.onBrand, fontWeight: "800", fontSize: fontSize.sm },
-
+  leagueCard: {
+    marginTop: spacing.md,
+    flexDirection: "row", alignItems: "center", padding: spacing.md + 2,
+    backgroundColor: colors.accent, borderRadius: radius.lg, gap: spacing.md, ...shadow.card,
+  },
+  leagueIconWrap: {
+    width: 46, height: 46, borderRadius: 23, backgroundColor: "rgba(0,53,122,0.15)",
+    alignItems: "center", justifyContent: "center",
+  },
+  leagueTitle: { fontWeight: "800", color: colors.brand, fontSize: fontSize.base },
+  leagueSub: { color: colors.brand, opacity: 0.75, fontSize: fontSize.xs, marginTop: 2 },
   sectionTitle: {
-    fontSize: fontSize.md,
-    fontWeight: "800",
-    color: colors.textPrimary,
-    marginTop: spacing.xl,
-    marginBottom: spacing.md,
+    fontSize: fontSize.md, fontWeight: "800", color: colors.textPrimary,
+    marginTop: spacing.xl, marginBottom: spacing.md,
   },
   recCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: spacing.lg,
-    borderRadius: radius.lg,
-    gap: spacing.md,
-    ...shadow.card,
+    flexDirection: "row", alignItems: "center", padding: spacing.lg,
+    borderRadius: radius.lg, gap: spacing.md, ...shadow.card,
   },
   recIconWrap: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 60, height: 60, borderRadius: 30,
     backgroundColor: "rgba(255,255,255,0.2)",
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: "center", justifyContent: "center",
   },
   recModule: { color: "rgba(255,255,255,0.85)", fontSize: fontSize.xs, fontWeight: "700", letterSpacing: 0.5, textTransform: "uppercase" },
   recTitle: { color: colors.onBrand, fontSize: fontSize.md, fontWeight: "800", marginTop: 2 },
   recSub: { color: "rgba(255,255,255,0.9)", fontSize: fontSize.sm, marginTop: 2 },
   playBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.onBrand,
-    alignItems: "center",
-    justifyContent: "center",
+    width: 44, height: 44, borderRadius: 22, backgroundColor: colors.onBrand,
+    alignItems: "center", justifyContent: "center",
   },
-
   bigPlayBtn: {
     marginTop: spacing.md,
     backgroundColor: colors.accent,
@@ -366,82 +327,42 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     ...shadow.card,
   },
-  bigPlayText: {
-    color: colors.brand,
-    fontSize: fontSize.md,
-    fontWeight: "800",
-  },
-
+  bigPlayText: { color: colors.brand, fontSize: fontSize.md, fontWeight: "800" },
   challengeList: { gap: spacing.sm },
   challengeCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: spacing.md,
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: radius.md,
-    gap: spacing.md,
-    ...shadow.card,
+    flexDirection: "row", alignItems: "center", padding: spacing.md,
+    backgroundColor: colors.surfaceAlt, borderRadius: radius.md, gap: spacing.md, ...shadow.card,
   },
   challengeIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#EEF3FB",
-    alignItems: "center",
-    justifyContent: "center",
+    width: 40, height: 40, borderRadius: 20, backgroundColor: "#EEF3FB",
+    alignItems: "center", justifyContent: "center",
   },
   challengeTitle: { fontSize: fontSize.base, fontWeight: "700", color: colors.textPrimary },
   challengeDesc: { fontSize: fontSize.sm, color: colors.textSecondary, marginTop: 2 },
-  xpBadge: {
-    backgroundColor: colors.accent,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: radius.pill,
-  },
+  xpBadge: { backgroundColor: colors.accent, paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.pill },
   xpBadgeText: { color: colors.brand, fontWeight: "800", fontSize: fontSize.xs },
-
   badgesHeader: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    marginTop: spacing.xl,
-    marginBottom: spacing.md,
+    flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between",
+    marginTop: spacing.xl, marginBottom: spacing.md,
   },
   linkText: { color: colors.brand, fontWeight: "700", fontSize: fontSize.sm },
-
   badgeRow: { gap: spacing.md, paddingRight: spacing.lg },
   badge: {
-    width: 96,
-    padding: spacing.md,
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: radius.md,
-    alignItems: "center",
-    ...shadow.card,
+    width: 96, padding: spacing.md, backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.md, alignItems: "center", ...shadow.card,
   },
   badgeLocked: { opacity: 0.65 },
   badgeIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 8,
+    width: 52, height: 52, borderRadius: 26,
+    alignItems: "center", justifyContent: "center", marginBottom: 8,
   },
   badgeName: {
-    fontSize: fontSize.xs,
-    textAlign: "center",
-    color: colors.textPrimary,
-    fontWeight: "700",
+    fontSize: fontSize.xs, textAlign: "center",
+    color: colors.textPrimary, fontWeight: "700",
   },
   lockOverlay: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: "#00000010",
-    alignItems: "center",
-    justifyContent: "center",
+    position: "absolute", top: 8, right: 8,
+    width: 20, height: 20, borderRadius: 10,
+    backgroundColor: "#00000010", alignItems: "center", justifyContent: "center",
   },
 });

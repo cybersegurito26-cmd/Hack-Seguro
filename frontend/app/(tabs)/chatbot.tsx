@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -14,51 +14,51 @@ import { Ionicons } from "@expo/vector-icons";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 
 import { colors, spacing, radius, fontSize, shadow } from "@/src/theme";
-import { BOT_INTENTS, BOT_DEFAULT, BOT_QUICK_ACTIONS } from "@/src/mock";
+import { BOT_QUICK_ACTIONS } from "@/src/mock";
+import { api } from "@/src/api";
+import { useAuth } from "@/src/auth";
 
-type Msg = {
-  id: string;
-  from: "bot" | "user";
-  text: string;
-};
+type Msg = { id: string; from: "bot" | "user"; text: string };
 
 let idCounter = 0;
 const nextId = () => `${Date.now()}-${idCounter++}`;
 
-function generateReply(input: string): string {
-  const q = input.toLowerCase();
-  for (const intent of BOT_INTENTS) {
-    if (intent.keywords.some((k) => q.includes(k))) return intent.response;
-  }
-  return BOT_DEFAULT;
-}
-
 export default function CiberBotScreen() {
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+  const sessionRef = useRef<string>(`sess-${Date.now()}`);
   const [messages, setMessages] = useState<Msg[]>([
     {
       id: nextId(),
       from: "bot",
-      text: "¡Hola! Soy CiberBot 🛡️. Puedo ayudarte con phishing, contraseñas, WhatsApp y más. Nunca te pediré datos personales. ¿En qué te ayudo?",
+      text: `¡Hola${user?.name ? ", " + user.name.split(" ")[0] : ""}! Soy CiberBot 🛡️. Pregúntame sobre phishing, contraseñas, WhatsApp, fraudes bancarios y más. Nunca te pediré datos personales.`,
     },
   ]);
   const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
   const listRef = useRef<FlatList<Msg>>(null);
 
-  const send = useCallback((text?: string) => {
+  const send = useCallback(async (text?: string) => {
     const value = (text ?? input).trim();
-    if (!value) return;
+    if (!value || sending) return;
     setInput("");
+    setSending(true);
     const userMsg: Msg = { id: nextId(), from: "user", text: value };
     setMessages((prev) => [...prev, userMsg]);
-    // Simulated typing delay
-    setTimeout(() => {
-      const reply: Msg = { id: nextId(), from: "bot", text: generateReply(value) };
-      setMessages((prev) => [...prev, reply]);
-      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
-    }, 500);
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
-  }, [input]);
+    try {
+      const res = await api.chat(sessionRef.current, value);
+      setMessages((prev) => [...prev, { id: nextId(), from: "bot", text: res.reply }]);
+    } catch (e: any) {
+      setMessages((prev) => [
+        ...prev,
+        { id: nextId(), from: "bot", text: "Ups, no pude responder ahora. Intenta de nuevo en un momento." },
+      ]);
+    } finally {
+      setSending(false);
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    }
+  }, [input, sending]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -70,7 +70,7 @@ export default function CiberBotScreen() {
           <Text style={styles.title}>CiberBot</Text>
           <View style={styles.onlineRow}>
             <View style={styles.dot} />
-            <Text style={styles.subtitle}>Asistente en línea · seguro y privado</Text>
+            <Text style={styles.subtitle}>Claude Sonnet 4.6 · seguro y privado</Text>
           </View>
         </View>
       </View>
@@ -89,6 +89,15 @@ export default function CiberBotScreen() {
           onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
         />
 
+        {sending && (
+          <View style={styles.typing} testID="chat-typing">
+            <View style={styles.bubbleAvatar}>
+              <Ionicons name="shield-checkmark" size={14} color={colors.brand} />
+            </View>
+            <Text style={styles.typingText}>CiberBot está pensando…</Text>
+          </View>
+        )}
+
         <View style={styles.quickWrap}>
           <ScrollView
             horizontal
@@ -102,6 +111,7 @@ export default function CiberBotScreen() {
                 onPress={() => send(q)}
                 testID={`quick-action-${q}`}
                 activeOpacity={0.8}
+                disabled={sending}
               >
                 <Text style={styles.chipText}>{q}</Text>
               </TouchableOpacity>
@@ -122,9 +132,9 @@ export default function CiberBotScreen() {
             returnKeyType="send"
           />
           <TouchableOpacity
-            style={[styles.sendBtn, !input.trim() && { opacity: 0.5 }]}
+            style={[styles.sendBtn, (!input.trim() || sending) && { opacity: 0.5 }]}
             onPress={() => send()}
-            disabled={!input.trim()}
+            disabled={!input.trim() || sending}
             testID="chat-send-button"
           >
             <Ionicons name="send" size={20} color={colors.onBrand} />
@@ -167,12 +177,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceAlt,
   },
   avatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: colors.accent,
-    alignItems: "center",
-    justifyContent: "center",
+    width: 42, height: 42, borderRadius: 21,
+    backgroundColor: colors.accent, alignItems: "center", justifyContent: "center",
   },
   title: { fontSize: fontSize.md, fontWeight: "800", color: colors.textPrimary },
   onlineRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 },
@@ -181,28 +187,18 @@ const styles = StyleSheet.create({
   messages: { padding: spacing.lg, gap: spacing.md },
   bubbleRow: { flexDirection: "row", alignItems: "flex-end", gap: 6 },
   bubbleAvatar: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: colors.accent,
-    alignItems: "center",
-    justifyContent: "center",
+    width: 24, height: 24, borderRadius: 12, backgroundColor: colors.accent,
+    alignItems: "center", justifyContent: "center",
   },
-  bubble: {
-    maxWidth: "80%",
-    padding: spacing.md,
-    borderRadius: radius.lg,
-  },
-  bubbleBot: {
-    backgroundColor: colors.surfaceAlt,
-    borderTopLeftRadius: 4,
-    ...shadow.card,
-  },
-  bubbleUser: {
-    backgroundColor: colors.brand,
-    borderTopRightRadius: 4,
-  },
+  bubble: { maxWidth: "80%", padding: spacing.md, borderRadius: radius.lg },
+  bubbleBot: { backgroundColor: colors.surfaceAlt, borderTopLeftRadius: 4, ...shadow.card },
+  bubbleUser: { backgroundColor: colors.brand, borderTopRightRadius: 4 },
   bubbleText: { color: colors.textPrimary, fontSize: fontSize.base, lineHeight: 22 },
+  typing: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
+  },
+  typingText: { color: colors.textSecondary, fontSize: fontSize.sm, fontStyle: "italic" },
   quickWrap: { borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   quickRow: { padding: spacing.md, gap: spacing.sm },
   chip: {
@@ -215,31 +211,18 @@ const styles = StyleSheet.create({
   },
   chipText: { color: colors.brand, fontWeight: "700", fontSize: fontSize.sm },
   inputBar: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    padding: spacing.md,
-    gap: spacing.sm,
-    backgroundColor: colors.surfaceAlt,
-    borderTopWidth: 1,
-    borderColor: colors.border,
+    flexDirection: "row", alignItems: "flex-end",
+    padding: spacing.md, gap: spacing.sm,
+    backgroundColor: colors.surfaceAlt, borderTopWidth: 1, borderColor: colors.border,
   },
   input: {
-    flex: 1,
-    maxHeight: 100,
-    minHeight: 42,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-    borderRadius: radius.lg,
-    backgroundColor: colors.surfaceElev,
-    color: colors.textPrimary,
-    fontSize: fontSize.base,
+    flex: 1, maxHeight: 100, minHeight: 42,
+    paddingHorizontal: spacing.md, paddingVertical: 10,
+    borderRadius: radius.lg, backgroundColor: colors.surfaceElev,
+    color: colors.textPrimary, fontSize: fontSize.base,
   },
   sendBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.brand,
-    alignItems: "center",
-    justifyContent: "center",
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: colors.brand, alignItems: "center", justifyContent: "center",
   },
 });

@@ -60,9 +60,10 @@ export default function MemoramaGame() {
     setFlipped((f) => [...f, id]);
   };
 
-  const finish = () => {
-    app.addXP(25);
-    app.addCoins(10);
+  const finish = async () => {
+    try {
+      await app.completeGame("memorama", tiles.length / 2, tiles.length / 2);
+    } catch {}
     router.back();
   };
 

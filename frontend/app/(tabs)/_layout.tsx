@@ -1,26 +1,29 @@
 import React from "react";
 import { Tabs, Redirect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { View, StyleSheet, Platform } from "react-native";
+import { View, StyleSheet } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { colors, spacing } from "@/src/theme";
-import { useApp } from "@/src/store";
+import { colors } from "@/src/theme";
+import { useAuth } from "@/src/auth";
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
-  const { profile } = useApp();
+  const { loading, user } = useAuth();
 
-  if (!profile) {
-    return <Redirect href="/" />;
-  }
+  if (loading) return null;
+  if (!user) return <Redirect href="/" />;
+  if (!user.school_code) return <Redirect href="/join-school" />;
+
+  const isTeacherOrParent = user.role === "teacher" || user.role === "parent";
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: colors.brand,
         tabBarInactiveTintColor: colors.textMuted,
-        tabBarLabelStyle: { fontSize: 11, fontWeight: "700", marginBottom: 2 },
+        tabBarLabelStyle: { fontSize: 10, fontWeight: "700", marginBottom: 2 },
         tabBarStyle: {
           backgroundColor: colors.surfaceAlt,
           borderTopWidth: 1,
@@ -62,6 +65,16 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="league"
+        options={{
+          title: "Liga",
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon name={focused ? "trophy" : "trophy-outline"} color={color} />
+          ),
+          tabBarButtonTestID: "tab-league",
+        }}
+      />
+      <Tabs.Screen
         name="chatbot"
         options={{
           title: "CiberBot",
@@ -81,6 +94,17 @@ export default function TabsLayout() {
           tabBarButtonTestID: "tab-profile",
         }}
       />
+      <Tabs.Screen
+        name="teacher"
+        options={{
+          title: "Panel",
+          href: isTeacherOrParent ? "/(tabs)/teacher" : null,
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon name={focused ? "briefcase" : "briefcase-outline"} color={color} />
+          ),
+          tabBarButtonTestID: "tab-teacher",
+        }}
+      />
     </Tabs>
   );
 }
@@ -88,7 +112,7 @@ export default function TabsLayout() {
 function TabIcon({ name, color }: { name: any; color: string }) {
   return (
     <View style={styles.iconWrap}>
-      <Ionicons name={name} size={24} color={color} />
+      <Ionicons name={name} size={22} color={color} />
     </View>
   );
 }
