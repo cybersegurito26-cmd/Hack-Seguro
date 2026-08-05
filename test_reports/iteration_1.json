@@ -1,0 +1,47 @@
+{
+  "summary": "Frontend-only smoke test of Hack-Seguro Expo MVP on mobile viewport (390x844). All 12 requested flows verified end-to-end: welcome screen, profile picker (4 options, nino pre-selected), 5-tab navigation, dashboard stats/streak, daily chest claim (XP 40->60, coins 25->40), 10 module nodes on Learn, lesson runner (select/check/continue), 4 game cards, Fraude game answer+next flow, Password strength meter reaches 100% with 'G4t0!Az*L_2029' enabling finish button, CiberBot returns a bot reply after user message, Profile toggles + badges visible. Only issue found: 'Cambiar de perfil' reset button clears state but does NOT navigate back to welcome screen (still shows dashboard, though with reset values). Deprecated RN style warnings detected (non-blocking).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "profile.tsx reset flow",
+        "issue": "After tapping 'Cambiar de perfil' (testID=reset-button), app.reset() executes and state returns to initial values, but router.replace('/') does NOT navigate back to the welcome screen. User remains on the tabs stack (dashboard) with reset stats. Expected: navigate to app/index.tsx welcome. Reference: /app/frontend/app/(tabs)/profile.tsx:110-114",
+        "testID": "reset-button",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "global",
+        "issues": [
+          "Deprecation console warning: 'shadow*' style props are deprecated. Use boxShadow (theme.ts shadow objects). Non-blocking on mobile but shows in web preview.",
+          "Deprecation console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents' — likely from a react-native-web dependency."
+        ]
+      }
+    ],
+    "react_native_issues": [
+      {
+        "component": "theme shadow tokens",
+        "issue": "shadow* style props usage triggers RN 0.76+ deprecation warning. Consider migrating theme.shadow to use boxShadow. Reference: /app/frontend/src/theme.ts (shadow.card / shadow.strong)"
+      }
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Fix reset-button navigation: after app.reset(), ensure navigation actually returns user to welcome screen. Options: use router.dismissAll() then router.replace('/'), or gate (tabs)/_layout.tsx on !profile with a Redirect, so replace('/') has effect.",
+    "(Nice-to-have) Migrate theme.shadow tokens from shadowColor/shadowOffset/shadowOpacity/shadowRadius to boxShadow to silence RN deprecation warnings."
+  ],
+  "critical_code_review_comments": [
+    "store.tsx: state is in-memory only (React Context); confirmed per spec (Phase 1). Cold reload resets progress — acceptable for MVP.",
+    "chatbot.tsx: keyword-based mock responder works as intended; bot reply delivered ~500ms after send.",
+    "(tabs)/_layout.tsx does not guard against profile===null; combined with the reset-button bug, a user who resets stays inside the tab stack instead of going to welcome."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "92% (12/13 checks fully green; 1 minor navigation bug on reset)"},
+  "seed_data_creation": "None. App uses in-memory mock data (MODULES, GAMES, PROFILES, BADGES, DAILY_CHALLENGES, FRAUD_CARDS, BOT_INTENTS).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Frontend-only Expo MVP, Phase 1 (no backend). Public URL: https://ciber-educativo.preview.emergentagent.com. Mobile viewport recommended (390x844). All testIDs verified as documented in problem statement. Only outstanding functional bug: reset-button in profile does not navigate to welcome (state resets but Stack navigation stays on (tabs)). CiberBot is keyword-based mock; XP/coins/state are in-memory React Context and reset on cold reload — this is intended.",
+  "rca_of_issue": "Reset flow bug RCA: profile.tsx calls app.reset() then router.replace('/'). Because the current route is inside the (tabs) group and expo-router treats '/' as (tabs)/index (since (tabs) is at the root and index.tsx is the tab home), router.replace('/') resolves to the dashboard tab rather than the app/index.tsx welcome screen. Fix: (a) use router.dismissAll() then router.replace('/(auth)') or move welcome outside the tabs by making /app/index.tsx explicit — but since tabs share the root, prefer explicit router.replace('/') AFTER navigating away via router.replace('/welcome') OR add a Redirect in (tabs)/_layout.tsx: if (!profile) return <Redirect href='/' />. The Redirect guard will kick the user out to welcome the moment reset() sets profile back to null."
+}
