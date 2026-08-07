@@ -1,10 +1,18 @@
-import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import { Platform } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from "expo-linking";
 import { useRouter } from "expo-router";
 
-import { api, getToken, setToken } from "@/src/api";
+import { api, getToken, setToken, AuthRole } from "@/src/api";
 import { registerForPush } from "@/src/push";
 
 WebBrowser.maybeCompleteAuthSession();
@@ -14,7 +22,7 @@ export type AppUser = {
   email: string;
   name: string;
   picture?: string | null;
-  role: "student" | "parent" | "teacher";
+  role: "student" | "teenager" | "parent" | "teacher";
   school_code?: string | null;
   grade?: string | null;
   group?: string | null;
@@ -33,6 +41,10 @@ type Ctx = {
   user: AppUser | null;
   refresh: () => Promise<void>;
   loginWithGoogle: () => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<AppUser>;
+  signUpWithEmail: (name: string, email: string, password: string, role: AuthRole) => Promise<AppUser>;
+  requestPasswordReset: (email: string) => Promise<void>;
+  resetPassword: (email: string, code: string, new_password: string) => Promise<AppUser>;
   processSessionId: (session_id: string) => Promise<AppUser | null>;
   logout: () => Promise<void>;
   setUserLocal: (u: AppUser | null) => void;
@@ -46,6 +58,18 @@ function extractSessionId(rawUrl: string | null | undefined): string | null {
   if (!rawUrl) return null;
   const m = rawUrl.match(/[?#&]session_id=([^&#]+)/);
   return m ? decodeURIComponent(m[1]) : null;
+}
+
+async function applyAuthResponse(
+  res: { session_token: string; user: any },
+  setUser: (u: AppUser | null) => void
+): Promise<AppUser> {
+  await setToken(res.session_token);
+  setUser(res.user);
+  if (res.user?.user_id) {
+    registerForPush(res.user.user_id).catch(() => {});
+  }
+  return res.user;
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -76,9 +100,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     usedSessionIds.add(session_id);
     try {
       const res = await api.authExchange(session_id);
-      await setToken(res.session_token);
-      setUser(res.user);
-      return res.user;
+      return await applyAuthResponse(res, setUser);
     } catch (e) {
       console.warn("auth exchange failed", e);
       return null;
@@ -119,6 +141,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       sub.remove();
     }
   }, [processSessionId]);
+
+  const signInWithEmail = useCallback(
+    async (email: string, password: string): Promise<AppUser> => {
+      const res = await api.authLogin(email.trim().toLowerCase(), password);
+      return applyAuthResponse(res, setUser);
+    },
+    []
+  );
+
+  const signUpWithEmail = useCallback(
+    async (name: string, email: string, password: string, role: AuthRole): Promise<AppUser> => {
+      const res = await api.authRegister({
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        password,
+        role,
+      });
+      return applyAuthResponse(res, setUser);
+    },
+    []
+  );
+
+  const requestPasswordReset = useCallback(async (email: string): Promise<void> => {
+    await api.authForgot(email.trim().toLowerCase());
+  }, []);
+
+  const resetPassword = useCallback(
+    async (email: string, code: string, new_password: string): Promise<AppUser> => {
+      const res = await api.authReset(email.trim().toLowerCase(), code.trim(), new_password);
+      return applyAuthResponse(res, setUser);
+    },
+    []
+  );
 
   const logout = useCallback(async () => {
     try { await api.logout(); } catch {}
@@ -163,10 +218,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     user,
     refresh,
     loginWithGoogle,
+    signInWithEmail,
+    signUpWithEmail,
+    requestPasswordReset,
+    resetPassword,
     processSessionId,
     logout,
     setUserLocal: setUser,
-  }), [loading, user, refresh, loginWithGoogle, processSessionId, logout]);
+  }), [loading, user, refresh, loginWithGoogle, signInWithEmail, signUpWithEmail, requestPasswordReset, resetPassword, processSessionId, logout]);
 
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
 }

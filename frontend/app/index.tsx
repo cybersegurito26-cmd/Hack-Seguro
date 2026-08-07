@@ -63,7 +63,7 @@ export default function EntryScreen() {
         <View style={styles.features}>
           <FeatureItem icon="game-controller" text="Juegos divertidos" />
           <FeatureItem icon="trophy" text="Liga semanal de tu escuela" />
-          <FeatureItem icon="chatbubbles" text="CiberBot con IA en español" />
+          <FeatureItem icon="chatbubbles" text="Hack-Bot con IA en español" />
         </View>
 
         <TouchableOpacity
@@ -73,11 +73,30 @@ export default function EntryScreen() {
           activeOpacity={0.9}
         >
           <Ionicons name="logo-google" size={22} color={colors.brand} />
-          <Text style={styles.ctaText}>Entrar con Google</Text>
+          <Text style={styles.ctaText}>Continuar con Google</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.ctaSecondary}
+          onPress={() => router.push("/auth/login")}
+          testID="email-login-button"
+          activeOpacity={0.9}
+        >
+          <Ionicons name="mail" size={20} color={colors.onBrand} />
+          <Text style={styles.ctaSecondaryText}>Iniciar sesión con correo</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.ctaOutline}
+          onPress={() => router.push("/auth/register")}
+          testID="email-register-button"
+          activeOpacity={0.9}
+        >
+          <Text style={styles.ctaOutlineText}>Crear cuenta nueva</Text>
         </TouchableOpacity>
 
         <Text style={styles.footerLegal}>
-          Emergent Auth · No pedimos ni guardamos contraseñas
+          Hack-Seguro · Prevención de ciberdelitos en México
         </Text>
       </View>
     </SafeAreaView>
@@ -156,7 +175,7 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   features: {
-    marginTop: spacing.xxl,
+    marginTop: spacing.xl,
     width: "100%",
     gap: spacing.md,
   },
@@ -178,20 +197,59 @@ const styles = StyleSheet.create({
   },
   featureText: { color: colors.onBrand, fontSize: fontSize.base, fontWeight: "600" },
   cta: {
-    marginTop: spacing.xxl,
+    marginTop: spacing.xl,
     backgroundColor: colors.accent,
     paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md + 2,
+    paddingVertical: 16,
     borderRadius: radius.pill,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: spacing.sm,
+    width: "100%",
+    minHeight: 56,
     ...shadow.card,
   },
   ctaText: {
     color: colors.brand,
     fontSize: fontSize.md,
     fontWeight: "800",
+  },
+  ctaSecondary: {
+    marginTop: spacing.md,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.25)",
+    paddingHorizontal: spacing.xl,
+    paddingVertical: 14,
+    borderRadius: radius.pill,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    width: "100%",
+    minHeight: 52,
+  },
+  ctaSecondaryText: {
+    color: colors.onBrand,
+    fontSize: fontSize.md,
+    fontWeight: "700",
+  },
+  ctaOutline: {
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: 12,
+    borderRadius: radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    minHeight: 44,
+  },
+  ctaOutlineText: {
+    color: colors.accent,
+    fontSize: fontSize.base,
+    fontWeight: "700",
+    textDecorationLine: "underline",
   },
   footerLegal: {
     marginTop: spacing.md,

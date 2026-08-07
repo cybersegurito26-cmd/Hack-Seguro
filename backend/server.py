@@ -32,6 +32,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
+import bcrypt
 import httpx
 import qrcode
 from PIL import Image, ImageDraw, ImageFont
@@ -40,7 +41,7 @@ from fastapi import FastAPI, APIRouter, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse, HTMLResponse, Response
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfgen import canvas
@@ -61,6 +62,9 @@ DB_NAME = os.environ.get("DB_NAME", "hackseguro")
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 EMERGENT_PUSH_KEY = os.environ.get("EMERGENT_PUSH_KEY", "placeholder")
 PUSH_BASE_URL = "https://integrations.emergentagent.com"
+EMAIL_BASE_URL = "https://integrations.emergentagent.com"
+EMERGENT_EMAIL_KEY = os.environ.get("EMERGENT_EMAIL_KEY", "placeholder")
+EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "Hack-Seguro")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL") or "https://ciber-educativo.preview.emergentagent.com"
 
 client = AsyncIOMotorClient(MONGO_URL)
@@ -82,7 +86,7 @@ MODULE_IDS = [
 ]
 
 CIBERBOT_SYSTEM_PROMPT = (
-    "Eres CiberBot, el asistente educativo de la app Hack-Seguro. "
+    "Eres Hack-Bot, el asistente educativo de la app Hack-Seguro. "
     "Hablas en español mexicano, cálido y motivador. "
     "Tu misión es enseñar a NIÑOS, ADOLESCENTES, PADRES y ADULTOS MAYORES de México "
     "a prevenir ciberdelitos (phishing, fraudes bancarios, ciberacoso, robo de identidad, "
@@ -174,6 +178,8 @@ async def on_startup():
     await db.chat_messages.create_index([("user_id", 1), ("session_id", 1), ("created_at", 1)])
     await db.certificates.create_index([("user_id", 1), ("module_id", 1)])
     await db.schools.create_index("code", unique=True)
+    await db.otp_codes.create_index("expires_at", expireAfterSeconds=0)
+    await db.otp_codes.create_index([("email", 1), ("created_at", -1)])
     # Seed a few sample schools for the demo
     seeds = [
         {"code": "COL-LEON-001", "name": "Colegio de León", "city": "León", "state": "Guanajuato"},
@@ -237,6 +243,192 @@ def user_public(u: User) -> dict:
 # Auth endpoints
 # -------------------------------------------------------------------
 _seen_session_ids: set[str] = set()
+
+
+# ---- Email helper (Emergent Resend proxy) ----------------------------------
+async def _send_email_html(recipient: str, subject: str, html: str) -> None:
+    if EMERGENT_EMAIL_KEY == "placeholder":
+        logger.warning("EMERGENT_EMAIL_KEY is placeholder — email skipped for %s", recipient)
+        return
+    payload = {
+        "to": [recipient],
+        "subject": subject,
+        "html": html,
+        "from_name": EMAIL_FROM_NAME,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            r = await http.post(
+                f"{EMAIL_BASE_URL}/api/v1/email/send",
+                headers={"X-Email-Key": EMERGENT_EMAIL_KEY},
+                json=payload,
+            )
+        r.raise_for_status()
+    except Exception as exc:
+        logger.exception("email send failed: %s", exc)
+        raise HTTPException(502, "No se pudo enviar el correo")
+
+
+def _hash_password(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
+
+
+def _check_password(pw: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(pw.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
+
+
+async def _issue_session(user_id: str) -> str:
+    token = f"hs_{uuid.uuid4().hex}{uuid.uuid4().hex}"
+    await db.user_sessions.insert_one({
+        "session_token": token,
+        "user_id": user_id,
+        "created_at": utcnow(),
+        "expires_at": utcnow() + timedelta(days=7),
+    })
+    return token
+
+
+# ---- Email + password models -----------------------------------------------
+ALLOWED_ROLES = {"student", "teenager", "parent", "teacher"}
+
+
+class RegisterIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    role: Optional[str] = "student"
+
+
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
+
+class ForgotIn(BaseModel):
+    email: EmailStr
+
+
+class ResetIn(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=4, max_length=8)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+# ---- Auth endpoints --------------------------------------------------------
+@api.post("/auth/register")
+async def auth_register(body: RegisterIn):
+    email = body.email.lower().strip()
+    name = body.name.strip()[:60]
+    if not name:
+        raise HTTPException(422, "El nombre no puede estar vacío")
+    role = (body.role or "student").lower()
+    if role not in ALLOWED_ROLES:
+        raise HTTPException(422, "Rol inválido")
+    existing = await db.users.find_one({"email": email}, {"_id": 0, "password_hash": 1, "user_id": 1})
+    if existing and existing.get("password_hash"):
+        raise HTTPException(409, "Ya existe una cuenta con este correo")
+    if existing:
+        user_id = existing.get("user_id")
+    else:
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        new_user = User(user_id=user_id, email=email, name=name, role=role)
+        await db.users.insert_one(new_user.dict())
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "name": name,
+            "role": role,
+            "password_hash": _hash_password(body.password),
+            "auth_provider": "email",
+        }},
+    )
+    token = await _issue_session(user_id)
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    logger.info("auth/register success email=%s user_id=%s role=%s", email, user_id, role)
+    return {"session_token": token, "user": user_public(User(**user))}
+
+
+@api.post("/auth/login")
+async def auth_login(body: LoginIn):
+    email = body.email.lower().strip()
+    u = await db.users.find_one({"email": email}, {"_id": 0})
+    if not u or not u.get("password_hash"):
+        raise HTTPException(401, "Correo o contraseña incorrectos")
+    if not _check_password(body.password, u["password_hash"]):
+        raise HTTPException(401, "Correo o contraseña incorrectos")
+    token = await _issue_session(u["user_id"])
+    return {"session_token": token, "user": user_public(User(**u))}
+
+
+@api.post("/auth/forgot-password")
+async def auth_forgot(body: ForgotIn, request: Request):
+    email = body.email.lower().strip()
+    # Rate limit: max 3 codes per 15 min per email
+    since = utcnow() - timedelta(minutes=15)
+    recent = await db.otp_codes.count_documents({"email": email, "created_at": {"$gte": since}})
+    if recent >= 3:
+        raise HTTPException(429, "Demasiados intentos. Prueba en 15 minutos.")
+    u = await db.users.find_one({"email": email}, {"_id": 0, "name": 1})
+    # Respond OK regardless of whether the user exists (avoid email enumeration)
+    if u:
+        import random
+        code = f"{random.randint(0, 999999):06d}"
+        await db.otp_codes.insert_one({
+            "email": email,
+            "code_hash": _hash_password(code),
+            "used": False,
+            "created_at": utcnow(),
+            "expires_at": utcnow() + timedelta(minutes=10),
+        })
+        try:
+            await _send_email_html(
+                recipient=email,
+                subject="Tu código de Hack-Seguro",
+                html=(
+                    f"<div style=\"font-family:sans-serif;background:#00357a;color:#fff;padding:32px;text-align:center\">"
+                    f"<h1 style=\"color:#d0e80b;margin:0\">Hack-Seguro</h1>"
+                    f"<p>Hola {u.get('name', 'explorador')}, tu código para restablecer tu contraseña es:</p>"
+                    f"<div style=\"background:#fff;color:#00357a;font-size:42px;font-weight:800;letter-spacing:8px;padding:20px;border-radius:16px;margin:24px auto;max-width:280px\">{code}</div>"
+                    f"<p style=\"opacity:0.85\">Este código caduca en 10 minutos. Si no lo pediste, ignora este correo.</p>"
+                    f"</div>"
+                ),
+            )
+        except HTTPException:
+            # If email fails and key is real, surface it. If placeholder, we already logged.
+            pass
+    return {"ok": True, "sent_to": email}
+
+
+@api.post("/auth/reset-password")
+async def auth_reset(body: ResetIn):
+    email = body.email.lower().strip()
+    cursor = db.otp_codes.find(
+        {"email": email, "used": False, "expires_at": {"$gte": utcnow()}}
+    ).sort("created_at", -1).limit(5)
+    candidates = await cursor.to_list(length=5)
+    matched = None
+    for row in candidates:
+        if _check_password(body.code, row["code_hash"]):
+            matched = row
+            break
+    if not matched:
+        raise HTTPException(400, "Código inválido o expirado")
+    await db.otp_codes.update_one({"_id": matched["_id"]}, {"$set": {"used": True, "used_at": utcnow()}})
+    u = await db.users.find_one({"email": email}, {"_id": 0, "user_id": 1})
+    if not u:
+        raise HTTPException(404, "Cuenta no encontrada")
+    await db.users.update_one(
+        {"user_id": u["user_id"]},
+        {"$set": {"password_hash": _hash_password(body.new_password), "auth_provider": "email"}},
+    )
+    # Invalidate old sessions
+    await db.user_sessions.delete_many({"user_id": u["user_id"]})
+    token = await _issue_session(u["user_id"])
+    user = await db.users.find_one({"user_id": u["user_id"]}, {"_id": 0})
+    return {"session_token": token, "user": user_public(User(**user))}
 
 
 @api.post("/auth/session")

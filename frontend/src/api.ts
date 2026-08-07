@@ -62,11 +62,37 @@ export async function apiFetch<T>(
 }
 
 // ---- endpoints ----
+export type AuthRole = "student" | "teenager" | "parent" | "teacher";
+
 export const api = {
   authExchange: (session_id: string) =>
     apiFetch<{ session_token: string; user: any }>("/auth/session", {
       method: "POST",
       body: { session_id },
+      auth: false,
+    }),
+  authRegister: (body: { name: string; email: string; password: string; role: AuthRole }) =>
+    apiFetch<{ session_token: string; user: any }>("/auth/register", {
+      method: "POST",
+      body,
+      auth: false,
+    }),
+  authLogin: (email: string, password: string) =>
+    apiFetch<{ session_token: string; user: any }>("/auth/login", {
+      method: "POST",
+      body: { email, password },
+      auth: false,
+    }),
+  authForgot: (email: string) =>
+    apiFetch<{ ok: boolean; sent_to: string }>("/auth/forgot-password", {
+      method: "POST",
+      body: { email },
+      auth: false,
+    }),
+  authReset: (email: string, code: string, new_password: string) =>
+    apiFetch<{ session_token: string; user: any }>("/auth/reset-password", {
+      method: "POST",
+      body: { email, code, new_password },
       auth: false,
     }),
   me: () => apiFetch<{ user: any }>("/auth/me"),

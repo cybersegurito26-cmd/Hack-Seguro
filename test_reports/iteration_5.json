@@ -1,0 +1,44 @@
+{
+  "summary": "Comprehensive Phase-4 auth (Email/Password + 6-digit OTP recovery) validation on Hack-Seguro. Backend: added /app/backend/tests/test_auth_email.py — 13/13 pytest cases PASS covering register (valid, 422×4, 409 duplicate, session_token authorises /auth/me), login (200, 401 wrong pw, 401 unknown email with identical body → no enumeration), forgot (200 unknown, 200 known + OTP row created in hackseguro.otp_codes, 429 after 3 attempts in 15 min), reset (400 wrong code, 422 short pw, 200 rotates session, old session invalidated, code single-use → 400 on reuse). Frontend E2E via Expo web preview @ https://ciber-educativo.preview.emergentagent.com (mobile viewport 390×844): welcome screen shows the 3 CTAs (google-login-button, email-login-button, email-register-button); register page renders all 4 roles (student/teenager/parent/teacher) with a working password-strength meter (\"Excelente\"); successful signup lands on /join-school; duplicate email surfaces 409 error banner; invalid login surfaces 401 banner; valid login proceeds into the app; forgot-link → /auth/forgot works; forgot-submit navigates to /auth/reset; OTP paste (fill with \"654321\") splits correctly across all 6 boxes; typed digit-by-digit auto-advance works with adequate keystroke spacing (Playwright timing note, not an app bug); submitting a valid injected code + new password logs the user in with a fresh session_token and the new password authenticates on subsequent /auth/login. Resend-code triggers a new OTP without crashing. No React Native red screens; no critical UI defects.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "global (Expo web)", "issues": [
+        "Console warning: \"shadow*\" style props are deprecated. Use \"boxShadow\" (cosmetic, does not affect functionality).",
+        "Console warning: props.pointerEvents is deprecated. Use style.pointerEvents (cosmetic)."
+      ]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth_email.py",
+    "/app/backend/tests/_inject_otp.py",
+    "/app/test_reports/pytest/auth_email.xml"
+  ],
+  "action_items": [
+    "OPTIONAL cosmetic: migrate shadow* style props → boxShadow across StyleSheets to silence RN-web deprecation warning.",
+    "OPTIONAL cosmetic: replace props.pointerEvents={...} with style={{ pointerEvents: ... }} where used."
+  ],
+  "critical_code_review_comments": [
+    "Login endpoint returns identical body/status for wrong password vs unknown email → prevents user enumeration (server.py:354-363). Verified by test_login_wrong_password_401.",
+    "Forgot-password issues 200 regardless of whether the user exists (server.py:366-402) and enforces a 3-per-15-min per-email rate-limit (server.py:370-373). Verified.",
+    "Reset-password invalidates ALL existing sessions for the user (server.py:428) then issues a fresh session_token; also marks the used OTP row so it cannot be replayed (server.py:419). Verified.",
+    "OTP codes stored only as bcrypt hashes (server.py:381) with a 10-min expiry and TTL index (server.py:181). Good.",
+    "Frontend reset.tsx setDigit properly supports both paste (>1 char → distribute) and per-key auto-advance. Verified end-to-end."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_auth_email.py (NEW — 13 pytest cases)",
+    "/app/backend/tests/_inject_otp.py (NEW — OTP hash injection helper for deterministic e2e)"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13 new auth cases pass; full previous suites remain unchanged).",
+    "frontend": "100% on the 4 auth screens + welcome screen: welcome CTAs, register (all 4 roles, strength meter, success → /join-school, dup email 409), login (invalid 401 banner, valid navigates, forgot-link nav), forgot → reset (paste + type auto-advance + reset submit + resend + login with new password all working)."
+  },
+  "seed_data_creation": "Each test creates a unique TEST_ prefixed email (e.g. TEST_reg_<hex>@example.com). No shared/global seed data mutated. OTP-hash injection uses the existing OTP row created by /api/auth/forgot-password.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: `cd /app/backend && python -m pytest tests/test_auth_email.py -v --junitxml=/app/test_reports/pytest/auth_email.xml`. For deterministic OTP reset e2e: `python /app/backend/tests/_inject_otp.py <email> 654321` (overwrites the latest unused OTP hash with bcrypt(654321)). Public URL: https://ciber-educativo.preview.emergentagent.com. Auth screens: /, /auth/login, /auth/register, /auth/forgot, /auth/reset. All testIDs from the review request are present and correct in the source (verified via grep). Note: When driving OTP via Playwright typing digit-by-digit, use ≥200 ms between keystrokes to let React re-render and refocus; paste (page.fill with the full 6-digit code) works instantly.",
+  "rca_of_issue": "N/A — no defects found. Initial appearance of a mis-typed OTP (`['3','2','1','','','']`) during first Playwright pass was a test-timing artefact (80 ms between keystrokes); re-running with 200 ms delay and paste both produce correct `['6','5','4','3','2','1']` / `['1','2','3','4','5','6']`. App behaviour is correct."
+}
