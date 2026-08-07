@@ -14,6 +14,7 @@ import { useRouter } from "expo-router";
 
 import { api, getToken, setToken, AuthRole } from "@/src/api";
 import { registerForPush } from "@/src/push";
+import { captureIncomingReferral, consumePendingReferral } from "@/src/referrals";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -34,6 +35,9 @@ export type AppUser = {
   daily_claim_date?: string | null;
   completed_lessons: Record<string, number>;
   badges: string[];
+  referrals_valid?: number;
+  referrals_pending?: number;
+  invited_by_user_id?: string | null;
 };
 
 type Ctx = {
@@ -99,7 +103,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!session_id || usedSessionIds.has(session_id)) return null;
     usedSessionIds.add(session_id);
     try {
-      const res = await api.authExchange(session_id);
+      const ref = await consumePendingReferral();
+      const res = await api.authExchange(session_id, ref);
       return await applyAuthResponse(res, setUser);
     } catch (e) {
       console.warn("auth exchange failed", e);
@@ -152,11 +157,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signUpWithEmail = useCallback(
     async (name: string, email: string, password: string, role: AuthRole): Promise<AppUser> => {
+      const ref = await consumePendingReferral();
       const res = await api.authRegister({
         name: name.trim(),
         email: email.trim().toLowerCase(),
         password,
         role,
+        ref,
       });
       return applyAuthResponse(res, setUser);
     },
@@ -188,19 +195,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (processing.current) return;
       processing.current = true;
       try {
+        // Capture ambassador ref BEFORE we clean the URL
+        await captureIncomingReferral();
         if (Platform.OS === "web" && typeof window !== "undefined") {
           const raw = window.location.hash + " " + window.location.search;
           const sid = extractSessionId(raw);
           if (sid) {
             await processSessionId(sid);
-            // clean URL
-            try {
-              const url = new URL(window.location.href);
-              url.hash = "";
-              url.searchParams.delete("session_id");
-              window.history.replaceState(window.history.state, "", url.pathname + url.search);
-            } catch {}
           }
+          // clean URL params consumed by the app (session_id, ref, code)
+          try {
+            const url = new URL(window.location.href);
+            let dirty = false;
+            for (const key of ["session_id", "ref", "code"]) {
+              if (url.searchParams.has(key)) {
+                url.searchParams.delete(key);
+                dirty = true;
+              }
+            }
+            if (url.hash) {
+              url.hash = "";
+              dirty = true;
+            }
+            if (dirty) {
+              window.history.replaceState(window.history.state, "", url.pathname + url.search);
+            }
+          } catch {}
         } else if (Platform.OS !== "web") {
           const initial = await Linking.getInitialURL();
           const sid = extractSessionId(initial);

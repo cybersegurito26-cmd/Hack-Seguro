@@ -65,13 +65,13 @@ export async function apiFetch<T>(
 export type AuthRole = "student" | "teenager" | "parent" | "teacher";
 
 export const api = {
-  authExchange: (session_id: string) =>
+  authExchange: (session_id: string, ref?: string | null) =>
     apiFetch<{ session_token: string; user: any }>("/auth/session", {
       method: "POST",
-      body: { session_id },
+      body: ref ? { session_id, ref } : { session_id },
       auth: false,
     }),
-  authRegister: (body: { name: string; email: string; password: string; role: AuthRole }) =>
+  authRegister: (body: { name: string; email: string; password: string; role: AuthRole; ref?: string | null }) =>
     apiFetch<{ session_token: string; user: any }>("/auth/register", {
       method: "POST",
       body,
@@ -143,4 +143,17 @@ export const api = {
     apiFetch<{ messages: any[] }>(`/chatbot/history?session_id=${encodeURIComponent(session_id)}`),
 
   teacherRoster: () => apiFetch<{ school_code: string | null; groups: any[] }>("/teacher/roster"),
+
+  referralsMine: () =>
+    apiFetch<{
+      user_id: string;
+      valid: number;
+      pending: number;
+      next_goal: number | null;
+      goals: { badge: string; threshold: number; unlocked: boolean }[];
+      share_url: string;
+      poster_url: string;
+      invitees: { name: string; picture: string | null; status: "pending" | "valid"; confirmed_at: string | null }[];
+    }>("/referrals/mine"),
+  referralPosterUrl: () => `${BASE_URL}/api/referrals/poster.png`,
 };

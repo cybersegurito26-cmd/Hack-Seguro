@@ -129,14 +129,20 @@ class User(BaseModel):
     hearts: int = 5
     streak: int = 0
     last_activity_at: Optional[datetime] = None
+    first_activity_at: Optional[datetime] = None
     daily_claim_date: Optional[str] = None  # YYYY-MM-DD
     completed_lessons: dict = Field(default_factory=dict)  # module_id -> count
     badges: List[str] = Field(default_factory=list)
+    invited_by_user_id: Optional[str] = None
+    referrals_valid: int = 0
+    referrals_pending: int = 0
+    referral_counted: bool = False  # True once this user has been counted for their inviter
     created_at: datetime = Field(default_factory=utcnow)
 
 
 class SessionExchange(BaseModel):
     session_id: str
+    ref: Optional[str] = None  # inviter user_id from ambassador link
 
 
 class JoinSchoolIn(BaseModel):
@@ -180,6 +186,8 @@ async def on_startup():
     await db.schools.create_index("code", unique=True)
     await db.otp_codes.create_index("expires_at", expireAfterSeconds=0)
     await db.otp_codes.create_index([("email", 1), ("created_at", -1)])
+    await db.referral_events.create_index([("inviter_id", 1), ("created_at", -1)])
+    await db.referral_events.create_index("invitee_id")
     # Seed a few sample schools for the demo
     seeds = [
         {"code": "COL-LEON-001", "name": "Colegio de León", "city": "León", "state": "Guanajuato"},
@@ -236,6 +244,9 @@ def user_public(u: User) -> dict:
         "daily_claim_date": u.daily_claim_date,
         "completed_lessons": u.completed_lessons,
         "badges": u.badges,
+        "referrals_valid": u.referrals_valid,
+        "referrals_pending": u.referrals_pending,
+        "invited_by_user_id": u.invited_by_user_id,
     }
 
 
@@ -291,6 +302,94 @@ async def _issue_session(user_id: str) -> str:
     return token
 
 
+# ---- Ambassadors / Referrals -----------------------------------------------
+async def _attach_inviter(user_id: str, ref: Optional[str]) -> None:
+    """If `ref` points to a real user that's different from user_id, set
+    invited_by_user_id on the invitee (only if not already set) and bump the
+    inviter's pending counter. No-op otherwise. Safe to call multiple times."""
+    if not ref:
+        return
+    ref = ref.strip()
+    if not ref or ref == user_id:
+        return
+    inviter = await db.users.find_one({"user_id": ref}, {"_id": 0, "user_id": 1})
+    if not inviter:
+        return
+    invitee = await db.users.find_one({"user_id": user_id}, {"_id": 0, "invited_by_user_id": 1})
+    if not invitee:
+        return
+    if invitee.get("invited_by_user_id"):
+        return  # already set — do not overwrite
+    await db.users.update_one(
+        {"user_id": user_id, "invited_by_user_id": {"$in": [None, ""]}},
+        {"$set": {"invited_by_user_id": ref}},
+    )
+    # Only bump pending if we actually stored the inviter
+    updated = await db.users.find_one({"user_id": user_id}, {"_id": 0, "invited_by_user_id": 1})
+    if updated and updated.get("invited_by_user_id") == ref:
+        await db.users.update_one({"user_id": ref}, {"$inc": {"referrals_pending": 1}})
+        await db.referral_events.insert_one({
+            "inviter_id": ref,
+            "invitee_id": user_id,
+            "status": "pending",
+            "created_at": utcnow(),
+        })
+        logger.info("referral pending: inviter=%s invitee=%s", ref, user_id)
+
+
+async def _maybe_confirm_referral(user_id: str) -> None:
+    """Called after a successful lesson/game completion. If this user hasn't been
+    counted yet AND has an inviter, promote referral to `valid`, increment the
+    inviter's counter and unlock ambassador badges when thresholds are met."""
+    user = await db.users.find_one(
+        {"user_id": user_id},
+        {"_id": 0, "invited_by_user_id": 1, "referral_counted": 1},
+    )
+    if not user:
+        return
+    if user.get("referral_counted"):
+        return
+    inviter_id = user.get("invited_by_user_id")
+    if not inviter_id:
+        return
+    # Mark this invitee as counted (atomic guard)
+    res = await db.users.update_one(
+        {"user_id": user_id, "referral_counted": {"$ne": True}},
+        {"$set": {"referral_counted": True, "first_activity_at": utcnow()}},
+    )
+    if res.modified_count == 0:
+        return
+    # Update inviter counters and badges
+    inv_before = await db.users.find_one({"user_id": inviter_id}, {"_id": 0, "referrals_valid": 1, "badges": 1})
+    if not inv_before:
+        return
+    new_valid = int(inv_before.get("referrals_valid", 0)) + 1
+    new_badges = set(inv_before.get("badges") or [])
+    unlocked_now: List[str] = []
+    if new_valid >= 3 and "embajador_digital" not in new_badges:
+        new_badges.add("embajador_digital")
+        unlocked_now.append("embajador_digital")
+    if new_valid >= 10 and "embajador_oro" not in new_badges:
+        new_badges.add("embajador_oro")
+        unlocked_now.append("embajador_oro")
+    update: dict = {
+        "$set": {"referrals_valid": new_valid},
+        "$inc": {"referrals_pending": -1},
+    }
+    if unlocked_now:
+        update["$addToSet"] = {"badges": {"$each": unlocked_now}}
+    await db.users.update_one({"user_id": inviter_id}, update)
+    await db.referral_events.update_one(
+        {"inviter_id": inviter_id, "invitee_id": user_id},
+        {"$set": {"status": "valid", "confirmed_at": utcnow()}},
+        upsert=True,
+    )
+    logger.info(
+        "referral confirmed: inviter=%s invitee=%s total=%d new_badges=%s",
+        inviter_id, user_id, new_valid, unlocked_now,
+    )
+
+
 # ---- Email + password models -----------------------------------------------
 ALLOWED_ROLES = {"student", "teenager", "parent", "teacher"}
 
@@ -300,6 +399,7 @@ class RegisterIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     role: Optional[str] = "student"
+    ref: Optional[str] = None  # inviter user_id from ambassador link
 
 
 class LoginIn(BaseModel):
@@ -345,6 +445,8 @@ async def auth_register(body: RegisterIn):
             "auth_provider": "email",
         }},
     )
+    # Attach ambassador inviter (safe no-op if invalid)
+    await _attach_inviter(user_id, body.ref)
     token = await _issue_session(user_id)
     user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     logger.info("auth/register success email=%s user_id=%s role=%s", email, user_id, role)
@@ -463,6 +565,9 @@ async def auth_session(body: SessionExchange):
 
     # Refresh basic info in case name/picture changed
     await db.users.update_one({"user_id": user_id}, {"$set": {"name": name, "picture": picture}})
+
+    # Attach ambassador inviter (safe no-op if invalid or already invited)
+    await _attach_inviter(user_id, body.ref)
 
     await db.user_sessions.insert_one({
         "session_token": session_token,
@@ -648,6 +753,8 @@ async def complete_lesson(body: LessonCompleteIn, authorization: Optional[str] =
     })
     u2 = await _apply_xp_coins(u.user_id, xp, coins)
     new_badges = await _maybe_unlock_badges(u.user_id)
+    # Ambassador: confirm the invite if this is the invitee's first activity
+    await _maybe_confirm_referral(u.user_id)
     u3 = await db.users.find_one({"user_id": u.user_id}, {"_id": 0})
     return {"user": user_public(User(**u3)), "xp": xp, "coins": coins, "new_badges": new_badges}
 
@@ -673,6 +780,8 @@ async def complete_game(body: GameCompleteIn, authorization: Optional[str] = Hea
         await db.users.update_one({"user_id": u.user_id}, {"$addToSet": {"badges": "detective"}})
     if body.game_id == "password" and body.score >= 5:
         await db.users.update_one({"user_id": u.user_id}, {"$addToSet": {"badges": "guardian"}})
+    # Ambassador: confirm the invite if this is the invitee's first activity
+    await _maybe_confirm_referral(u.user_id)
     u3 = await db.users.find_one({"user_id": u.user_id}, {"_id": 0})
     return {"user": user_public(User(**u3)), "xp": xp, "coins": coins}
 
@@ -1165,15 +1274,93 @@ async def school_poster(code: str):
     )
 
 
+def _generate_referral_poster(user: "User", school: Optional[dict], share_url: str) -> bytes:
+    """Personal invitation poster for ambassadors (shared via native share sheet)."""
+    W, H = 1080, 1920
+    img = Image.new("RGB", (W, H), "#00357a")
+    d = ImageDraw.Draw(img)
+
+    def font(size: int, bold: bool = False) -> ImageFont.ImageFont:
+        candidates = [
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
+        for p in candidates:
+            try:
+                return ImageFont.truetype(p, size)
+            except Exception:
+                continue
+        return ImageFont.load_default()
+
+    # Lime accent band
+    d.rectangle([(0, 0), (W, 12)], fill="#d0e80b")
+
+    # Header
+    d.ellipse([(W // 2 - 90, 180), (W // 2 + 90, 360)], fill="#d0e80b")
+    d.text((W // 2, 270), "🛡️", fill="#00357a", font=font(96, True), anchor="mm")
+
+    d.text((W // 2, 440), "HACK-SEGURO", fill="#FFFFFF", font=font(64, True), anchor="mm")
+    d.text((W // 2, 505), "Aprende ciberseguridad jugando", fill="#d0e80b", font=font(32), anchor="mm")
+
+    # Invitation title
+    first_name = (user.name or "Un guardián").split(" ")[0][:20]
+    d.text((W // 2, 660), "Te invita a ser", fill="#FFFFFF", font=font(38), anchor="mm")
+    d.text((W // 2, 730), f"{first_name}", fill="#d0e80b", font=font(72, True), anchor="mm")
+    d.text((W // 2, 810), "un Guardián Digital", fill="#FFFFFF", font=font(46, True), anchor="mm")
+
+    # School line
+    if school:
+        d.text((W // 2, 900), f"Escuela: {school.get('name','')[:34]}", fill="#FFFFFF", font=font(32), anchor="mm")
+
+    # Card
+    card_top, card_bottom = 970, 1210
+    d.rounded_rectangle([(120, card_top), (W - 120, card_bottom)], radius=40, fill="#FFFFFF")
+    d.text((W // 2, card_top + 50), "Bono al aceptar", fill="#475569", font=font(26), anchor="mm")
+    d.text((W // 2, card_top + 120), "+50 XP para ambos", fill="#00357a", font=font(56, True), anchor="mm")
+    d.text((W // 2, card_top + 190), "al completar tu primera lección", fill="#475569", font=font(24), anchor="mm")
+
+    # QR
+    qr_size = 480
+    qr_png = _qr_png_bytes(share_url, qr_size)
+    qr_img = Image.open(io.BytesIO(qr_png)).convert("RGB")
+    img.paste(qr_img, ((W - qr_size) // 2, 1280))
+
+    # Footer
+    d.text((W // 2, 1810), "Escanea con la cámara de tu celular", fill="#d0e80b", font=font(30), anchor="mm")
+    d.text((W // 2, 1860), "o abre hackseguro.app", fill="#FFFFFF", font=font(26), anchor="mm")
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
 @api.get("/join")
-async def join_landing(code: Optional[str] = None):
-    """Public landing page that installs prompt scans open to."""
+async def join_landing(code: Optional[str] = None, ref: Optional[str] = None):
+    """Public landing page that install prompts scan opens to.
+    Accepts optional `code` (school) and `ref` (inviter user_id).
+    Redirects to the mobile deep-link scheme AND falls back to a friendly page."""
     code = (code or "").upper()
     school_line = ""
     if code:
         school = await db.schools.find_one({"code": code}, {"_id": 0})
         if school:
             school_line = f"<h2>Únete a {school['name']}</h2><p>Código: <strong>{code}</strong></p>"
+    inviter_line = ""
+    if ref:
+        inviter = await db.users.find_one({"user_id": ref.strip()}, {"_id": 0, "name": 1})
+        if inviter:
+            inviter_line = (
+                f"<p style='margin-top:16px'>🎁 <strong>{inviter.get('name','Un amigo')}</strong> te invitó a Hack-Seguro. "
+                f"Al completar tu primera lección, ambos suman puntos.</p>"
+            )
+    # Build the target URL with the params so the client can read them
+    params = []
+    if code:
+        params.append(f"code={code}")
+    if ref:
+        params.append(f"ref={ref.strip()}")
+    query = ("?" + "&".join(params)) if params else ""
+    open_url = f"{PUBLIC_BASE_URL}/{query}"
     html = f"""<!doctype html><html lang="es"><head><meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width,initial-scale=1"/>
     <title>Únete a Hack-Seguro</title>
@@ -1183,11 +1370,89 @@ async def join_landing(code: Optional[str] = None):
     h1{{color:#00357a}} .cta{{display:inline-block;margin-top:20px;padding:14px 28px;background:#d0e80b;color:#00357a;
     border-radius:999px;font-weight:800;text-decoration:none}}
     </style></head><body><div class="card">
-    <h1>🛡️ Hack-Seguro</h1>{school_line}
+    <h1>🛡️ Hack-Seguro</h1>{school_line}{inviter_line}
     <p>Aprende ciberseguridad jugando cada día. Compite con tu escuela y gana insignias.</p>
-    <a class="cta" href="{PUBLIC_BASE_URL}">Abrir Hack-Seguro</a>
+    <a class="cta" href="{open_url}">Abrir Hack-Seguro</a>
     </div></body></html>"""
     return HTMLResponse(html)
+
+
+# -------------------------------------------------------------------
+# Ambassadors / Referrals endpoints
+# -------------------------------------------------------------------
+def _referral_share_url(user_id: str, school_code: Optional[str]) -> str:
+    parts = [f"ref={user_id}"]
+    if school_code:
+        parts.append(f"code={school_code}")
+    return f"{PUBLIC_BASE_URL}/api/join?" + "&".join(parts)
+
+
+@api.get("/referrals/mine")
+async def referrals_mine(authorization: Optional[str] = Header(None)):
+    u = await current_user(authorization)
+    share_url = _referral_share_url(u.user_id, u.school_code)
+    # Fetch recent invitees for the "friends" list
+    cur = db.referral_events.find(
+        {"inviter_id": u.user_id},
+        {"_id": 0, "invitee_id": 1, "status": 1, "confirmed_at": 1, "created_at": 1},
+    ).sort("created_at", -1).limit(20)
+    events = await cur.to_list(length=20)
+    invitee_ids = [e["invitee_id"] for e in events]
+    invitees_by_id: dict = {}
+    if invitee_ids:
+        cur2 = db.users.find(
+            {"user_id": {"$in": invitee_ids}},
+            {"_id": 0, "user_id": 1, "name": 1, "picture": 1},
+        )
+        for row in await cur2.to_list(length=len(invitee_ids)):
+            invitees_by_id[row["user_id"]] = row
+    invitees = []
+    for e in events:
+        info = invitees_by_id.get(e["invitee_id"], {})
+        first_name = (info.get("name") or "").split(" ")[0] or "Amigo/a"
+        confirmed = e.get("confirmed_at")
+        if isinstance(confirmed, datetime):
+            confirmed = confirmed.isoformat()
+        invitees.append({
+            "name": first_name,
+            "picture": info.get("picture"),
+            "status": e.get("status", "pending"),
+            "confirmed_at": confirmed,
+        })
+    goals = [
+        {"badge": "embajador_digital", "threshold": 3, "unlocked": u.referrals_valid >= 3},
+        {"badge": "embajador_oro", "threshold": 10, "unlocked": u.referrals_valid >= 10},
+    ]
+    next_goal_threshold = None
+    for g in goals:
+        if not g["unlocked"]:
+            next_goal_threshold = g["threshold"]
+            break
+    return {
+        "user_id": u.user_id,
+        "valid": u.referrals_valid,
+        "pending": u.referrals_pending,
+        "next_goal": next_goal_threshold,
+        "goals": goals,
+        "share_url": share_url,
+        "poster_url": f"{PUBLIC_BASE_URL}/api/referrals/poster.png",
+        "invitees": invitees,
+    }
+
+
+@api.get("/referrals/poster.png")
+async def referral_poster(authorization: Optional[str] = Header(None)):
+    u = await current_user(authorization)
+    school = None
+    if u.school_code:
+        school = await db.schools.find_one({"code": u.school_code}, {"_id": 0})
+    share_url = _referral_share_url(u.user_id, u.school_code)
+    png = _generate_referral_poster(u, school, share_url)
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={"Content-Disposition": f'inline; filename="hackseguro-invita-{u.user_id}.png"'},
+    )
 
 
 # -------------------------------------------------------------------

@@ -242,6 +242,8 @@ export const BADGES: Badge[] = [
   { id: "escudo", name: "Escudo de Familia", icon: "shield-checkmark", color: "#16A34A", desc: "Completa 3 módulos", unlocked: false },
   { id: "racha7", name: "Racha de 7 días", icon: "flame", color: "#F97316", desc: "Practica 7 días seguidos", unlocked: false },
   { id: "maestro", name: "Maestro Ciber", icon: "trophy", color: "#EAB308", desc: "Completa todos los módulos", unlocked: false },
+  { id: "embajador_digital", name: "Embajador Digital", icon: "megaphone", color: "#0EA5E9", desc: "Invita a 3 amigos que completen una lección", unlocked: false },
+  { id: "embajador_oro", name: "Embajador de Oro", icon: "medal", color: "#D0E80B", desc: "Invita a 10 amigos que completen una lección", unlocked: false },
 ];
 
 export type GameCard = {

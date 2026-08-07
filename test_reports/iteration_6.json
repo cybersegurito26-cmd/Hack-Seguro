@@ -1,0 +1,48 @@
+{
+  "summary": "Ambassadors / Referrals feature validated end-to-end. Backend: created /app/backend/tests/test_referrals.py — 16/16 pytest cases PASS across 6 classes covering (1) register with ref (valid attribution, bogus silent-ignore, self-ref safeguard, duplicate email 409 + counter integrity), (2) session-referral path via direct Mongo injection (mirroring what /auth/session does), (3) referral confirmation on FIRST lesson (valid+1 / pending-1 / referral_events promoted / referral_counted + first_activity_at set), 2nd lesson guard (no double-count), 3 invitees → embajador_digital badge, 10 invitees → embajador_oro badge, (4) GET /referrals/mine shape (valid, pending, next_goal, goals[thresholds 3+10], share_url includes ref=+code=, poster_url, invitees list ≤20 with first-name-only), 401 without auth, (5) poster.png with PNG magic \\x89PNG, size > 5KB, Content-Disposition inline filename containing user_id, 401 without auth, (6) /api/join public HTML with inviter name + school name + Abrir CTA, still renders school-only when ref missing. Frontend E2E via Expo web preview @ https://ciber-educativo.preview.emergentagent.com (mobile viewport 390×844): Profile /profile renders AmbassadorsCard with all 3 stats (Confirmados/Pendientes/Para insignia), progress bar, 2 goal pills (🥉 3, 🥇 10), primary CTA \"Invitar a mi escuela\", \"Copiar link\" (label toggles to \"¡Copiado!\" on tap → clipboard confirmed) and \"Ver póster\" (modal opens with poster-close + poster-share testIDs, close dismisses the modal). After seeding 1 valid + 2 pending invitees via API, the card correctly shows 1 / 2 / 2 for goal 3 and lists first-name-only entries with correct \"Pendiente\" (amber) / \"Confirmado\" (green) pills. 2 real bugs found — see below (both are business-logic issues left for the main agent).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AmbassadorsCard poster modal", "issue": "Image inside the \"Ver póster\" modal renders a broken image on web: /api/referrals/poster.png requires Bearer auth and <img> tags cannot inject Authorization headers. Console shows a 401 for the image request. Reference: /app/frontend/src/components/AmbassadorsCard.tsx:210-214 uses <Image source={{uri: api.referralPosterUrl()}} /> without a signed / query-token URL. Backend endpoint at /app/backend/server.py:1443 hard-gates poster on Bearer token.", "testID": "invite-poster-button", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "?ref=<user_id> cold-start capture on web", "issue": "captureIncomingReferral stores a GARBLED value (e.g. 'user_0513bd38aefb https://ciber-educativo.preview.emergentagent.com/?ref=user_0513bd38aefb') in localStorage/AsyncStorage under 'hackseguro.pending_ref'. Downstream, POST /auth/register receives that string as ref → backend user lookup fails → invitee.invited_by_user_id stays null (silent ignore). The entire cold-start referral attribution flow is broken on web. Root cause: /app/frontend/src/referrals.ts:27 builds raw = hash + ' ' + search + ' ' + href and parseParam uses regex `[?#&]${key}=([^&#]+)` which does NOT exclude whitespace, so the capture group swallows everything up to the next '&' or '#'. Fix: either tighten the regex to `[?#&]${key}=([^&#\\s]+)` OR parse each of location.hash / location.search / location.href separately (recommended). Reproduced end-to-end: after ?ref=<real inviter id>, pending_ref = '<real> https://...' → register(ref=<garbled>) → /auth/me → invited_by_user_id = null.", "affected_testIDs": ["reg-submit"]}
+    ],
+    "design_issues": [
+      {"screen": "global (Expo web)", "issues": [
+        "Cosmetic RN-web console warnings (unchanged from iter5): shadow* deprecated (use boxShadow), props.pointerEvents deprecated."
+      ]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_referrals.py",
+    "/app/test_reports/pytest/referrals.xml"
+  ],
+  "action_items": [
+    "HIGH — Fix /app/frontend/src/referrals.ts parseParam / captureIncomingReferral so the ref stored is exactly the user_id (not user_id + trailing URL). Suggested: replace the concatenated raw with sequential lookups in [window.location.search, window.location.hash, window.location.href] and use a tighter regex `[?#&]ref=([^&#\\s]+)`. Add a unit test that captureIncomingReferral() from a URL like `/?ref=user_ABC` writes exactly `user_ABC`.",
+    "HIGH — Make the ambassadors poster viewable on web: either (a) accept `?token=<session_token>` as an alternative auth path on GET /api/referrals/poster.png, or (b) embed the poster as base64 in the /referrals/mine response, or (c) generate a short-lived signed URL. Currently the modal shows a broken image on the web preview.",
+    "LOW — Consider extracting AmbassadorsCard.tsx (386 lines) into card + modal sub-components for readability (not a blocker)."
+  ],
+  "critical_code_review_comments": [
+    "_attach_inviter (server.py:306-337) correctly guards against: null ref, self-ref (ref == user_id), unknown inviter, invitee already attributed. Idempotent — verified by test_a_valid_ref_sets_attribution + test_c_self_referral_is_ignored + test_d_duplicate_email_does_not_double_bump.",
+    "_maybe_confirm_referral (server.py:340-390) atomically flips referral_counted=true, decrements inviter.referrals_pending, increments referrals_valid, promotes referral_events.status → valid with confirmed_at, and unlocks badges at 3/10 thresholds. Called from both /lessons/complete (server.py:757) and /games/complete (server.py:784). Verified with test_b_second_lesson_does_not_double_count (guarded by $ne True) and test_c/d badge unlocks.",
+    "GET /referrals/mine paginates events limit=20 and joins invitee display via a single find $in query (no N+1). First-name split is done server-side (server.py:1412) — confirmed by test_invitees_cap_at_20_and_first_name_only.",
+    "Poster PNG generation (server.py:1277-1330 + call at 1450) returns image/png with Content-Disposition inline. PNG bytes start with \\x89PNG. Size verified > 5KB.",
+    "/api/join public HTML correctly injects inviter first name AND school name AND a deep-link CTA. Missing ref still renders the school block only.",
+    "BUG — /app/frontend/src/referrals.ts parseParam regex is too permissive (`[^&#]+`); combined with the space-joined raw string in captureIncomingReferral(), it captures URL trailing text into the pending_ref. Blocks the described cold-start attribution path.",
+    "BUG — <Image source={{uri: api.referralPosterUrl()}}> in AmbassadorsCard renders a broken image on web because the poster endpoint requires a Bearer token that <img> requests cannot include."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_referrals.py (NEW — 16 pytest cases across 6 test classes)"
+  ],
+  "success_rate": {
+    "backend": "100% (16/16 new referral cases pass; previous suites remain green).",
+    "frontend": "80% — profile card, all testIDs, copy-button toggle, poster modal open/close all work; BUT (a) cold-start ?ref capture stores a garbled string breaking end-to-end attribution on web, and (b) the poster <Image> returns 401 on web because it can't attach a Bearer token."
+  },
+  "seed_data_creation": "All test data uses TEST_ prefixed random emails (uuid.uuid4().hex[:10]). Backend pytest creates ~26 users + ~20 referral_events across the run; frontend E2E creates 4 more (1 real user via UI register + 3 API-seeded invitees for the card-refresh test). No shared/global seed data mutated. Cleanup deferred to the test collection TTLs / manual cleanup.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run: `cd /app/backend && python -m pytest tests/test_referrals.py -v --junitxml=/app/test_reports/pytest/referrals.xml` (17s, 16 tests). Public URL: https://ciber-educativo.preview.emergentagent.com. Profile screen: /profile. All ambassadors testIDs verified present: ambassadors-card, referrals-valid, referrals-pending, invite-share-button, invite-copy-button, invite-poster-button, poster-close, poster-share. To re-verify the cold-start capture bug once fixed, open `?ref=user_XXXXXX` in the web preview, then evaluate `localStorage.getItem('hackseguro.pending_ref')` — it must equal exactly `\"user_XXXXXX\"` (with quotes because AsyncStorage-web JSON-stringifies). Note that AsyncStorage on web ends up in localStorage (not IndexedDB), so `localStorage.getItem(...)` is the right assertion. Direct Mongo helpers live in /app/backend/tests/_smoke_referrals.py and /app/backend/tests/test_referrals.py.",
+  "rca_of_issue": "BUG #1 (ref-capture garbled): /app/frontend/src/referrals.ts:27 concatenates location.hash + ' ' + location.search + ' ' + location.href into one blob. parseParam uses `[?#&]${key}=([^&#]+)` — the character class does not include whitespace, so the regex greedily eats everything from `?ref=` until the next `&` or `#`. Because the same query is repeated in `search` and `href`, the captured value ends up being e.g. `user_0513bd38aefb https://ciber-educativo.preview.emergentagent.com/?ref=user_0513bd38aefb`. Mitigation: (a) tighten regex to `[?#&]${key}=([^&#\\s]+)`, and/or (b) parse search/hash/href separately and return the first hit. Simple 3-line patch. BUG #2 (poster 401 on web): backend `/api/referrals/poster.png` hard-requires Authorization: Bearer <token>. React-Native-Web `Image` maps to `<img src=...>` which cannot inject that header. Options: accept `?token=` query alternative in the endpoint, or return the PNG bytes as base64 inside /referrals/mine, or issue a short-lived signed URL."
+}

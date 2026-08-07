@@ -15,7 +15,8 @@ import { colors, spacing, radius, fontSize, shadow } from "@/src/theme";
 import { useApp, XP_PER_LEVEL } from "@/src/store";
 import { BADGES, MODULES } from "@/src/mock";
 import { useAuth } from "@/src/auth";
-import { api, BASE_URL } from "@/src/api";
+import { api } from "@/src/api";
+import { AmbassadorsCard } from "@/src/components/AmbassadorsCard";
 
 export default function ProfileScreen() {
   const { user } = useApp();
@@ -68,6 +69,9 @@ export default function ProfileScreen() {
             <MiniStat icon="ribbon" color={colors.brand} value={unlockedBadges.length} label="Insignias" />
           </View>
         </View>
+
+        <Text style={styles.sectionTitle}>Invita a tu escuela</Text>
+        <AmbassadorsCard userName={user.name} />
 
         <Text style={styles.sectionTitle}>Mis insignias</Text>
         <View style={styles.badgesGrid}>
