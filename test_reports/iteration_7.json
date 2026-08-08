@@ -1,0 +1,28 @@
+{
+  "summary": "Verified both Expo Go crash fixes. (1) Cold-start on web preview at http://localhost:3000/ renders the Hack-Seguro welcome screen cleanly with 3 CTAs — NO 'expo-notifications does not support Expo Go' crash text in DOM, NO thrown errors, NO console errors referencing expo-notifications/setNotificationHandler/ExpoGo. Only a benign library-internal warning ('Listening to push token changes is not yet fully supported on web') which is not from our code and is a warning, not an exception. (2) Static analysis: `Notifications.setNotificationHandler` appears exactly ONCE and is inside `registerForPush()` body (line 34, function spans lines 23-71). No other file in /app/frontend/src or /app/frontend/app references expo-notifications. All 7 `Notifications.*` calls in push.ts sit inside the function, gated by Platform.OS!=='web', Device.isDevice, and Constants.appOwnership!=='expo' checks. (3) app.json: `expo.android.googleServicesFile` key is absent; `expo.plugins` still contains 'expo-notifications'; `android.package`, `android.permissions`, `ios.bundleIdentifier` still present. `npx expo config --json` parses successfully with zero warnings (previous 'Could not parse Expo config' warnings only appeared in older log lines before the restart; the current metro run is clean). (4) Regression smoke: /api/auth/register→200 and /api/referrals/mine→200 both pass.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_smoke_push_fix.py",
+    "/app/test_reports/pytest/smoke_push_fix.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "push.ts is now import-safe: all expo-notifications APIs are gated inside registerForPush() with three guards (web, non-device, Expo Go). handlerConfigured flag ensures setNotificationHandler runs at most once. Clean fix.",
+    "Consider deleting the stray `Could not parse Expo config` log lines from older supervisor sessions by clearing /var/log/supervisor/expo.err.log; current process no longer emits them. Not a functional issue."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_smoke_push_fix.py (new — 3 regression smoke tests)"
+  ],
+  "success_rate": {"backend": "100% (3/3)", "frontend": "100% (cold-start clean)"},
+  "seed_data_creation": "Ephemeral: 1 fresh registered user per run (timestamped email); 1 refreshed session token for the seeded test.student@hackseguro.test ambassador. No persistent seed changes.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Both Expo Go crash fixes are validated. push.ts is import-safe, app.json parses cleanly, and auth+referrals endpoints unaffected. The residual expo-notifications web warning ('Listening to push token changes is not yet fully supported on web') is emitted by the expo-notifications library itself when imported on web — it is a warning, not an exception, and does not affect functionality. Test file for future regressions: /app/backend/tests/test_smoke_push_fix.py.",
+  "rca_of_issue": "Original crash RCA: `Notifications.setNotificationHandler({...})` was invoked at module top-level inside src/push.ts. Because src/auth.tsx imports registerForPush from push.ts, that top-level call ran during the JS bundle boot on Expo Go, where the underlying native notifications module is not linked, raising 'expo-notifications functionality is not fully supported in Expo Go'. Fix moves the handler + all Notifications.* calls inside registerForPush(), guarded so they never execute in web or Expo Go environments. Secondary warning ('missing google-services.json') came from a dangling expo.android.googleServicesFile pointing to a non-existent file — removed from app.json until a real FCM config is added at build time."
+}

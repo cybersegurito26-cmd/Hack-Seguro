@@ -8,21 +8,17 @@ import Constants from "expo-constants";
 
 import { api } from "@/src/api";
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: false,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
-
 let registered = false;
+let handlerConfigured = false;
 
 /**
  * Requests permission and registers the device push token with the backend.
  * Safe no-op on web / Expo Go where push tokens aren't available.
+ *
+ * NOTE: Nothing from `expo-notifications` runs at module import time — this
+ * avoids the "Expo Go doesn't support push notifications" crash. The
+ * `setNotificationHandler` call is deferred until the first real registration
+ * attempt on a proper native build.
  */
 export async function registerForPush(userId: string) {
   if (registered) return;
@@ -30,10 +26,23 @@ export async function registerForPush(userId: string) {
   if (!Device.isDevice) return;
   const isExpoGo = Constants.appOwnership === "expo";
   if (isExpoGo) {
-    // Push notifications don't work in Expo Go
+    // Push notifications don't work in Expo Go — do not touch expo-notifications APIs
     return;
   }
   try {
+    if (!handlerConfigured) {
+      Notifications.setNotificationHandler({
+        handleNotification: async () => ({
+          shouldShowAlert: true,
+          shouldPlaySound: false,
+          shouldSetBadge: false,
+          shouldShowBanner: true,
+          shouldShowList: true,
+        }),
+      });
+      handlerConfigured = true;
+    }
+
     const { status: existing } = await Notifications.getPermissionsAsync();
     let finalStatus = existing;
     if (existing !== "granted") {
