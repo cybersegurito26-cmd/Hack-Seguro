@@ -156,4 +156,11 @@ export const api = {
       invitees: { name: string; picture: string | null; status: "pending" | "valid"; confirmed_at: string | null }[];
     }>("/referrals/mine"),
   referralPosterUrl: () => `${BASE_URL}/api/referrals/poster.png`,
+  /** Same poster URL but with an inline bearer token so <Image>/<img> can render it. */
+  referralPosterUrlWithToken: async () => {
+    const token = await getToken();
+    return token
+      ? `${BASE_URL}/api/referrals/poster.png?t=${encodeURIComponent(token)}`
+      : `${BASE_URL}/api/referrals/poster.png`;
+  },
 };

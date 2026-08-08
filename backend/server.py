@@ -1441,8 +1441,10 @@ async def referrals_mine(authorization: Optional[str] = Header(None)):
 
 
 @api.get("/referrals/poster.png")
-async def referral_poster(authorization: Optional[str] = Header(None)):
-    u = await current_user(authorization)
+async def referral_poster(t: Optional[str] = None, authorization: Optional[str] = Header(None)):
+    # Allow token via query param (so <img src> can render on web) or Authorization header.
+    auth = authorization or (f"Bearer {t}" if t else None)
+    u = await current_user(auth)
     school = None
     if u.school_code:
         school = await db.schools.find_one({"code": u.school_code}, {"_id": 0})
@@ -1451,7 +1453,10 @@ async def referral_poster(authorization: Optional[str] = Header(None)):
     return Response(
         content=png,
         media_type="image/png",
-        headers={"Content-Disposition": f'inline; filename="hackseguro-invita-{u.user_id}.png"'},
+        headers={
+            "Content-Disposition": f'inline; filename="hackseguro-invita-{u.user_id}.png"',
+            "Cache-Control": "private, max-age=300",
+        },
     )
 
 

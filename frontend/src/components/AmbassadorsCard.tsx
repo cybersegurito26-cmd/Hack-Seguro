@@ -23,6 +23,7 @@ export function AmbassadorsCard({ userName }: { userName: string }) {
   const [data, setData] = useState<ReferralData | null>(null);
   const [loading, setLoading] = useState(true);
   const [posterOpen, setPosterOpen] = useState(false);
+  const [posterUri, setPosterUri] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   const load = useCallback(async () => {
@@ -37,6 +38,18 @@ export function AmbassadorsCard({ userName }: { userName: string }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const openPoster = useCallback(async () => {
+    // Build the poster URL WITH an inline bearer token so <Image>/<img>
+    // can render it without going through fetch (native <Image> can't set headers).
+    try {
+      const uri = await api.referralPosterUrlWithToken();
+      setPosterUri(uri);
+    } catch {
+      setPosterUri(api.referralPosterUrl());
+    }
+    setPosterOpen(true);
+  }, []);
 
   const share = async () => {
     if (!data) return;
@@ -154,7 +167,7 @@ export function AmbassadorsCard({ userName }: { userName: string }) {
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.secondaryBtn}
-            onPress={() => setPosterOpen(true)}
+            onPress={openPoster}
             testID="invite-poster-button"
           >
             <Ionicons name="qr-code" size={18} color={colors.brand} />
@@ -207,11 +220,17 @@ export function AmbassadorsCard({ userName }: { userName: string }) {
               </TouchableOpacity>
             </View>
             <ScrollView contentContainerStyle={modalStyles.sheetBody}>
-              <Image
-                source={{ uri: api.referralPosterUrl() }}
-                style={modalStyles.poster}
-                resizeMode="contain"
-              />
+              {posterUri ? (
+                <Image
+                  source={{ uri: posterUri }}
+                  style={modalStyles.poster}
+                  resizeMode="contain"
+                />
+              ) : (
+                <View style={[modalStyles.poster, { alignItems: "center", justifyContent: "center" }]}>
+                  <ActivityIndicator color={colors.brand} />
+                </View>
+              )}
               <Text style={modalStyles.hint}>
                 Comparte esta imagen en el chat de tu grupo o pégala en el pizarrón del salón.
               </Text>

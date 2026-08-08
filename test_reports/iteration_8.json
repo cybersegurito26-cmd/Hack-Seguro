@@ -1,0 +1,42 @@
+{
+  "summary": "ITER 8 verification of two Ambassadors/Referrals fixes from iter6 — BOTH FIXES CONFIRMED WORKING. (1) captureIncomingReferral rewrite in /app/frontend/src/referrals.ts now correctly stores exactly `\"user_XXXXXX\"` (JSON-quoted by AsyncStorage-web) with NO whitespace and NO leaked URL fragment. New parseParam regex `[?#&]${key}=([^&#\\s]+)` + firstMatch(separateCandidates) + REF_VALIDATOR `/^user_[a-f0-9]{6,32}$/i` all working as designed. Malformed URLs (%20hax%20) and non-hex ids (user_nonexistent999) are correctly rejected client-side. (2) Backend GET /api/referrals/poster.png now accepts `?t=<session_token>` as an alternative to Authorization header (server.py:1443-1460) — verified via new pytest suite: missing token=401, header=200 PNG, ?t=valid=200 PNG (96 KB, `\\x89PNG` magic), ?t=bogus=401, ?t=expired(deleted-session)=401. Frontend AmbassadorsCard.openPoster() resolves referralPosterUrlWithToken() before opening the modal, so <Image src={...?t=<token>}> renders successfully (HTTP 200, image/png, naturalWidth=1080). Full E2E attribution flow verified: (a) `/?ref=user_78caf7d13f49` → localStorage stores `\"user_78caf7d13f49\"`; (b) fresh register → pending_ref consumed (null); (c) inviter's /referrals/mine now shows pending=1 with the new invitee, confirming invited_by_user_id was set correctly on the backend. Cache-Control emitted by the backend as `private, max-age=300` (verified via direct localhost curl); the public ingress/Cloudflare layer overrides it to `no-store, no-cache, must-revalidate` — this is infra, not a code issue. No new bugs found. 12/12 new pytest cases pass. Cosmetic RN-web console warnings unchanged (shadow*, pointerEvents deprecations).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/referrals/poster.png", "issue": "Cache-Control emitted by backend as `private, max-age=300` is overridden by the ingress/Cloudflare layer to `no-store, no-cache, must-revalidate` when accessed via the public URL. Direct backend hit (localhost:8001) preserves the intended header. Non-blocking — image still returns 200 image/png, but per-user caching won't take effect at the CDN. Consider disabling the ingress-level override, or accept the trade-off."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "global (Expo web)", "issues": ["Cosmetic warnings persist (not blockers): 'shadow*' style props are deprecated (use boxShadow); props.pointerEvents is deprecated. Same as iter5/iter6/iter7."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_referrals_iter7.py",
+    "/app/test_reports/pytest/referrals_iter7.xml",
+    "/app/backend/tests/test_referrals.py"
+  ],
+  "action_items": [
+    "OPTIONAL / LOW — Investigate the ingress Cache-Control override on /api/referrals/poster.png (backend emits `private, max-age=300` correctly; the platform proxy rewrites it). Not a code fix."
+  ],
+  "critical_code_review_comments": [
+    "Fix #1 (referrals.ts) is clean and defensive: parseParam explicitly excludes whitespace via `[^&#\\s]+`, firstMatch parses search/hash/href separately (no concatenation), REF_VALIDATOR gates both writes AND reads (consumePendingReferral/peekPendingReferral drop stale malformed values). Backend _attach_inviter (server.py) already ignores unknown refs — belt-and-suspenders.",
+    "Fix #2 (poster.png ?t=) mirrors the existing certificates pattern (/api/certificates/{module_id}?t=). Header still takes priority over query when both are present. AmbassadorsCard shows an ActivityIndicator while awaiting the token — no broken image flash. referralPosterUrlWithToken correctly url-encodes the token.",
+    "REF_VALIDATOR `/^user_[a-f0-9]{6,32}$/i` matches the backend user_id format (`user_` + uuid.uuid4().hex[:12]). If backend user_id format ever changes to include non-hex chars, this validator must be updated in lockstep — flag for reviewers."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_referrals_iter7.py (NEW — 12 pytest cases: poster ?t= auth × 5, /referrals/mine regression × 2, /api/join × 2, register-with-ref × 3)"
+  ],
+  "success_rate": {
+    "backend": "100% (12/12 iter7 tests pass)",
+    "frontend": "100% for the two targeted flows — ref capture writes exactly `user_XXXXXX` with no leakage; pending_ref consumed post-register; inviter's /referrals/mine reflects the new invitee (pending=1); poster modal loads image via ?t=<token> with HTTP 200 image/png and naturalWidth=1080; close button works; ambassador counters unchanged after modal open/close."
+  },
+  "seed_data_creation": "Created ~5 TEST_iter7_* users via /api/auth/register (1 inviter used for both backend + frontend, plus 3 invitees for register-with-ref cases and 1 UI invitee). One session deliberately deleted from user_sessions to simulate expired-token 401. Inviter user_78caf7d13f49 joined DEMO-001 during frontend test. No production data mutated.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Re-run: `cd /app/backend && EXPO_PUBLIC_BACKEND_URL=https://ciber-educativo.preview.emergentagent.com python -m pytest tests/test_referrals_iter7.py tests/test_referrals.py -v -o addopts=''` (~28 tests, ~20s). Frontend verification of issue #1: open `/?ref=user_XXXXXX` and expect `localStorage.getItem('hackseguro.pending_ref')` === `'\"user_XXXXXX\"'` (JSON-quoted, no whitespace, no https:// leak). Issue #2 verification: at /profile tap `invite-poster-button` and expect an <img> with `src` containing `/api/referrals/poster.png?t=` — modal should show the poster image (naturalWidth ≈ 1080), not a broken image icon.",
+  "rca_of_issue": "N/A — verifying prior fixes, both confirmed. Iter7 fixes correctly address both root causes: (1) referrals.ts no longer concatenates URL fragments and now uses a whitespace-excluding regex + strict shape validator; (2) poster.png endpoint accepts a query-token auth alternative, allowing <img> to render on web where headers cannot be attached."
+}
